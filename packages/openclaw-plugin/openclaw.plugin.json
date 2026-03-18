@@ -1,0 +1,103 @@
+{
+  "id": "viking-ts",
+  "name": "Viking TS Context Engine",
+  "version": "0.1.0",
+  "kind": "context-engine",
+  "description": "TypeScript-native context database for AI agents. Provides semantic memory storage, retrieval, and automatic capture.",
+  "author": "viking-ts",
+  "modes": {
+    "local": {
+      "description": "Spawn a local viking-ts server as a subprocess",
+      "parameters": {
+        "port": {
+          "type": "number",
+          "default": 1934,
+          "description": "Port for the local server"
+        },
+        "storagePath": {
+          "type": "string",
+          "default": "~/.viking-ts/data",
+          "description": "Path for data storage"
+        }
+      }
+    },
+    "remote": {
+      "description": "Connect to an existing viking-ts server",
+      "parameters": {
+        "baseUrl": {
+          "type": "string",
+          "description": "URL of the remote viking-ts server"
+        },
+        "apiKey": {
+          "type": "string",
+          "description": "API key for authentication"
+        }
+      }
+    }
+  },
+  "parameters": {
+    "agentId": {
+      "type": "string",
+      "default": "default",
+      "description": "Agent identifier for memory isolation"
+    },
+    "autoRecall": {
+      "type": "boolean",
+      "default": true,
+      "description": "Automatically search memories before each turn"
+    },
+    "recallLimit": {
+      "type": "number",
+      "default": 6,
+      "description": "Maximum memories to recall per turn"
+    },
+    "recallScoreThreshold": {
+      "type": "number",
+      "default": 0.01,
+      "description": "Minimum similarity score for recall"
+    },
+    "autoCapture": {
+      "type": "boolean",
+      "default": true,
+      "description": "Automatically extract memories after each turn"
+    },
+    "captureMode": {
+      "type": "string",
+      "enum": ["semantic", "keyword"],
+      "default": "semantic",
+      "description": "Memory capture trigger mode"
+    }
+  },
+  "tools": [
+    {
+      "name": "commit_memory",
+      "description": "Store a memory in the context database. Use this when you want to explicitly remember something for future conversations.",
+      "parameters": {
+        "text": {
+          "type": "string",
+          "description": "The memory text to store"
+        },
+        "category": {
+          "type": "string",
+          "enum": ["profile", "preferences", "entities", "events", "cases", "patterns", "general"],
+          "description": "Memory category"
+        }
+      }
+    },
+    {
+      "name": "search_memories",
+      "description": "Search the context database for relevant memories. Use this when you need to recall information from past conversations.",
+      "parameters": {
+        "query": {
+          "type": "string",
+          "description": "Search query"
+        },
+        "limit": {
+          "type": "number",
+          "description": "Maximum results to return",
+          "default": 6
+        }
+      }
+    }
+  ]
+}

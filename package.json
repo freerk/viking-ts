@@ -1,0 +1,20 @@
+{
+  "name": "viking-ts",
+  "version": "0.1.0",
+  "private": true,
+  "description": "TypeScript-native context database for AI agents",
+  "workspaces": [
+    "packages/server",
+    "packages/openclaw-plugin"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces",
+    "test": "npm run test --workspaces",
+    "lint": "npm run lint --workspaces",
+    "start": "npm run start --workspace=packages/server",
+    "start:dev": "npm run start:dev --workspace=packages/server"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
