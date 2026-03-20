@@ -23,6 +23,7 @@ export class ResourceService {
     title?: string;
     text?: string;
     url?: string;
+    uri?: string;
   }): Promise<ResourceRecord> {
     if (!params.text && !params.url) {
       throw new BadRequestException('Either text or url must be provided');
@@ -32,7 +33,7 @@ export class ResourceService {
     const now = new Date().toISOString();
     const content = params.text ?? `Resource from URL: ${params.url}`;
     const title = params.title ?? params.url ?? content.slice(0, 80);
-    const uri = this.vikingUri.build('resources', `${id}.md`);
+    const uri = params.uri ?? this.vikingUri.build('resources', `${id}.md`);
 
     let l0Abstract = '';
     let l1Overview = '';

@@ -18,6 +18,7 @@ export class ResourceController {
       title: dto.title,
       text: dto.text,
       url: dto.url,
+      uri: dto.uri,
     });
     return okResponse(resource, startTime);
   }

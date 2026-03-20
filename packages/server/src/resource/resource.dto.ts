@@ -3,6 +3,14 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 
 export class CreateResourceDto {
+  @ApiPropertyOptional({
+    description: 'Custom Viking URI, e.g. viking://resources/whisperline/principles.md',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  uri?: string;
+
   @ApiPropertyOptional({ description: 'Resource title' })
   @IsOptional()
   @IsString()

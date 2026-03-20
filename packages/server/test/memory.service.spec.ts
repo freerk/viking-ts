@@ -129,6 +129,59 @@ describe('MemoryService', () => {
 
       expect(memory.uri).toBe('viking://user/memories/custom/test.md');
     });
+
+    it('should generate agent-scope URI for agent type', async () => {
+      const memory = await memoryService.createMemory({
+        text: 'Agent observation',
+        type: 'agent',
+        category: 'cases',
+      });
+
+      expect(memory.uri).toMatch(/^viking:\/\/agent\/memories\/cases\//);
+    });
+
+    it('should gracefully handle LLM failure and fall back to text slices', async () => {
+      const llm = module.get(LlmService);
+      (llm.generateAbstract as jest.Mock).mockRejectedValueOnce(new Error('LLM down'));
+      (llm.generateOverview as jest.Mock).mockRejectedValueOnce(new Error('LLM down'));
+
+      const text = 'Content that triggers LLM failure for testing';
+      const memory = await memoryService.createMemory({ text });
+
+      expect(memory.id).toBeDefined();
+      expect(memory.l0Abstract).toBe(text.slice(0, 100));
+      expect(memory.l1Overview).toBe(text.slice(0, 500));
+    });
+
+    it('should gracefully handle embedding failure', async () => {
+      const embedding = module.get(EmbeddingService);
+      (embedding.embed as jest.Mock).mockRejectedValueOnce(new Error('Embed down'));
+
+      const memory = await memoryService.createMemory({ text: 'Content with embed failure' });
+
+      expect(memory.id).toBeDefined();
+      const retrieved = metadataStore.getMemoryById(memory.id);
+      expect(retrieved).toBeDefined();
+    });
+
+    it('should preserve agentId and userId on the created memory', async () => {
+      const memory = await memoryService.createMemory({
+        text: 'Scoped memory',
+        agentId: 'agent-42',
+        userId: 'user-99',
+      });
+
+      expect(memory.agentId).toBe('agent-42');
+      expect(memory.userId).toBe('user-99');
+    });
+
+    it('should set createdAt and updatedAt timestamps', async () => {
+      const memory = await memoryService.createMemory({ text: 'Timestamped' });
+
+      expect(memory.createdAt).toBeDefined();
+      expect(memory.updatedAt).toBeDefined();
+      expect(memory.createdAt).toBe(memory.updatedAt);
+    });
   });
 
   describe('listMemories', () => {
@@ -210,6 +263,44 @@ describe('MemoryService', () => {
       expect(results.length).toBeGreaterThanOrEqual(1);
       expect(results[0]?.score).toBeGreaterThan(0);
     });
+
+    it('should include id, uri, text, and l0Abstract in results', async () => {
+      await memoryService.createMemory({
+        text: 'Detailed memory for search result shape',
+        category: 'general',
+      });
+
+      const results = await memoryService.searchMemories('search result shape');
+      expect(results.length).toBeGreaterThanOrEqual(1);
+      expect(results[0]?.id).toBeDefined();
+      expect(results[0]?.uri).toBeDefined();
+      expect(results[0]?.text).toBeDefined();
+      expect(results[0]?.l0Abstract).toBeDefined();
+    });
+
+    it('should filter results by uriFilter prefix', async () => {
+      await memoryService.createMemory({
+        text: 'Memory with user scope',
+        type: 'user',
+        category: 'preferences',
+      });
+      await memoryService.createMemory({
+        text: 'Memory with agent scope',
+        type: 'agent',
+        category: 'cases',
+      });
+
+      const results = await memoryService.searchMemories(
+        'Memory',
+        10,
+        0.01,
+        'viking://user/memories/',
+      );
+
+      for (const r of results) {
+        expect(r.uri).toMatch(/^viking:\/\/user\/memories\//);
+      }
+    });
   });
 
   describe('captureSession', () => {
@@ -223,6 +314,78 @@ describe('MemoryService', () => {
       expect(memories.length).toBeGreaterThanOrEqual(1);
       expect(memories[0]?.text).toBe('User likes TypeScript');
       expect(memories[0]?.category).toBe('preferences');
+    });
+
+    it('should pass agentId and userId to created memories', async () => {
+      const messages = [{ role: 'user', content: 'I like dark mode' }];
+      const memories = await memoryService.captureSession(messages, 'agent-1', 'user-1');
+
+      expect(memories.length).toBeGreaterThanOrEqual(1);
+      expect(memories[0]?.agentId).toBe('agent-1');
+      expect(memories[0]?.userId).toBe('user-1');
+    });
+
+    it('should store session and messages in metadata store', async () => {
+      const messages = [
+        { role: 'user', content: 'Test message' },
+        { role: 'assistant', content: 'Response' },
+      ];
+
+      await memoryService.captureSession(messages);
+
+      const allMemories = metadataStore.listMemories({});
+      expect(allMemories.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('should return empty array when extraction returns nothing', async () => {
+      const llmService = module.get(LlmService);
+      (llmService.extractMemories as jest.Mock).mockResolvedValueOnce([]);
+
+      const memories = await memoryService.captureSession([
+        { role: 'user', content: 'Nothing worth remembering' },
+      ]);
+
+      expect(memories).toHaveLength(0);
+    });
+
+    it('should handle extraction failure gracefully', async () => {
+      const llmService = module.get(LlmService);
+      (llmService.extractMemories as jest.Mock).mockRejectedValueOnce(
+        new Error('LLM extraction error'),
+      );
+
+      const memories = await memoryService.captureSession([
+        { role: 'user', content: 'Something' },
+      ]);
+
+      expect(memories).toHaveLength(0);
+    });
+
+    it('should skip individual memory creation failures and continue', async () => {
+      const llmService = module.get(LlmService);
+      const embeddingService = module.get(EmbeddingService);
+      (llmService.extractMemories as jest.Mock).mockResolvedValueOnce([
+        { text: 'First fact', category: 'general' },
+        { text: 'Second fact', category: 'preferences' },
+      ]);
+      // First createMemory succeeds, second fails on LLM
+      (llmService.generateAbstract as jest.Mock)
+        .mockResolvedValueOnce('Abstract 1')
+        .mockRejectedValueOnce(new Error('LLM fail'));
+      (llmService.generateOverview as jest.Mock)
+        .mockResolvedValueOnce('Overview 1')
+        .mockRejectedValueOnce(new Error('LLM fail'));
+      // Make embedding fail on second call to trigger the catch in createMemory
+      (embeddingService.embed as jest.Mock)
+        .mockResolvedValueOnce(FAKE_VECTOR)
+        .mockRejectedValueOnce(new Error('Embed fail'));
+
+      const memories = await memoryService.captureSession([
+        { role: 'user', content: 'Some facts' },
+      ]);
+
+      // Both memories should still be created (graceful degradation)
+      expect(memories).toHaveLength(2);
     });
   });
 });

@@ -1,4 +1,4 @@
-import { IsString, IsOptional, IsEnum, MaxLength, IsNumber, Min, Max } from 'class-validator';
+import { IsString, IsOptional, IsEnum, MaxLength, IsNumber, Min, Max, IsArray } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 
@@ -110,6 +110,7 @@ export class ListMemoriesQueryDto {
 
 export class CaptureSessionDto {
   @ApiProperty({ description: 'Conversation messages to capture' })
+  @IsArray()
   messages!: Array<{ role: string; content: string }>;
 
   @ApiPropertyOptional()

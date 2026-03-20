@@ -17,4 +17,20 @@ describe('HealthController', () => {
     expect(result.status).toBe('ok');
     expect(result.version).toBe('0.1.0');
   });
+
+  it('should return an object with exactly two keys', () => {
+    const result = controller.getHealth();
+    expect(Object.keys(result)).toEqual(['status', 'version']);
+  });
+
+  it('should return consistent results on repeated calls', () => {
+    const first = controller.getHealth();
+    const second = controller.getHealth();
+    expect(first).toEqual(second);
+  });
+
+  it('should return version in semver format', () => {
+    const result = controller.getHealth();
+    expect(result.version).toMatch(/^\d+\.\d+\.\d+$/);
+  });
 });
