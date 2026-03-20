@@ -17,7 +17,7 @@ import { loadConfig } from './config';
       load: [loadConfig],
     }),
     HealthModule,
-    StorageModule,
+    StorageModule.register(),
     EmbeddingModule,
     LlmModule,
     VikingUriModule,

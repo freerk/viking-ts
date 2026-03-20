@@ -94,6 +94,49 @@ After each turn, the plugin sends the conversation to the server for memory extr
 - `commit_memory`: Explicitly store a memory
 - `search_memories`: Search the memory database
 
+## PostgreSQL + pgvector (optional)
+
+By default viking-ts uses SQLite + vectra for zero-config local storage. For production workloads you can switch to PostgreSQL with pgvector for scalable vector search.
+
+### Requirements
+
+- PostgreSQL 14+ with the [pgvector](https://github.com/pgvector/pgvector) extension
+
+### Docker quickstart
+
+```bash
+docker run -e POSTGRES_PASSWORD=postgres -p 5432:5432 pgvector/pgvector:pg16
+```
+
+### Enable Postgres backend
+
+```bash
+export STORAGE_BACKEND=postgres
+export DB_HOST=localhost
+export DB_PORT=5432
+export DB_USERNAME=postgres
+export DB_PASSWORD=postgres
+export DB_DATABASE=viking_ts
+```
+
+### Run migrations
+
+```bash
+npm run migration:run --workspace=packages/server
+```
+
+### Environment variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `STORAGE_BACKEND` | `sqlite` | Set to `postgres` to use PostgreSQL |
+| `DB_HOST` | `localhost` | PostgreSQL host |
+| `DB_PORT` | `5432` | PostgreSQL port |
+| `DB_USERNAME` | `postgres` | PostgreSQL username |
+| `DB_PASSWORD` | — | PostgreSQL password |
+| `DB_DATABASE` | `viking_ts` | PostgreSQL database name |
+| `DB_LOGGING` | `false` | Enable TypeORM query logging |
+
 ## Configuration
 
 Optional config file at `~/.viking-ts/config.json`:
@@ -129,8 +172,8 @@ Start the server and visit `http://localhost:1934/docs` for interactive Swagger 
 | Component | Technology |
 |-----------|-----------|
 | API framework | NestJS |
-| Vector storage | vectra (pure TypeScript) |
-| Metadata storage | better-sqlite3 |
+| Vector storage | vectra (pure TypeScript) / pgvector |
+| Metadata storage | better-sqlite3 / PostgreSQL + TypeORM |
 | Embedding + LLM | OpenAI SDK |
 | Validation | class-validator (server), Zod (plugin) |
 | API docs | @nestjs/swagger |
