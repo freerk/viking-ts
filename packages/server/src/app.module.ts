@@ -7,6 +7,7 @@ import { LlmModule } from './llm/llm.module';
 import { VikingUriModule } from './viking-uri/viking-uri.module';
 import { MemoryModule } from './memory/memory.module';
 import { ResourceModule } from './resource/resource.module';
+import { SkillModule } from './skills/skill.module';
 import { loadConfig } from './config';
 
 @Module({
@@ -22,6 +23,7 @@ import { loadConfig } from './config';
     VikingUriModule,
     MemoryModule,
     ResourceModule,
+    SkillModule,
   ],
 })
 export class AppModule {}

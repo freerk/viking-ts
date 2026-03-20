@@ -8,6 +8,7 @@ import {
   MemoryType,
   MemoryCategory,
   ResourceRecord,
+  SkillRecord,
   SessionRecord,
   SessionMessage,
 } from '../shared/types';
@@ -74,6 +75,22 @@ export class MetadataStoreService implements OnModuleInit, OnModuleDestroy {
       );
 
       CREATE INDEX IF NOT EXISTS idx_resources_uri ON resources(uri);
+
+      CREATE TABLE IF NOT EXISTS skills (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        description TEXT NOT NULL DEFAULT '',
+        uri TEXT NOT NULL,
+        tags TEXT NOT NULL DEFAULT '[]',
+        l0_abstract TEXT NOT NULL DEFAULT '',
+        l1_overview TEXT NOT NULL DEFAULT '',
+        l2_content TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_skills_uri ON skills(uri);
+      CREATE INDEX IF NOT EXISTS idx_skills_name ON skills(name);
 
       CREATE TABLE IF NOT EXISTS sessions (
         id TEXT PRIMARY KEY,
@@ -247,6 +264,56 @@ export class MetadataStoreService implements OnModuleInit, OnModuleDestroy {
     return result.changes > 0;
   }
 
+  /* ── Skills ── */
+
+  insertSkill(skill: SkillRecord): void {
+    this.db
+      .prepare(
+        `INSERT INTO skills (id, name, description, uri, tags, l0_abstract, l1_overview, l2_content, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        skill.id,
+        skill.name,
+        skill.description,
+        skill.uri,
+        JSON.stringify(skill.tags),
+        skill.l0Abstract,
+        skill.l1Overview,
+        skill.l2Content,
+        skill.createdAt,
+        skill.updatedAt,
+      );
+  }
+
+  getSkillById(id: string): SkillRecord | undefined {
+    const row = this.db
+      .prepare('SELECT * FROM skills WHERE id = ?')
+      .get(id) as Record<string, unknown> | undefined;
+    return row ? this.rowToSkill(row) : undefined;
+  }
+
+  listSkills(limit: number = 100, offset: number = 0, tag?: string): SkillRecord[] {
+    if (tag) {
+      const rows = this.db
+        .prepare(
+          `SELECT * FROM skills WHERE tags LIKE ? ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+        )
+        .all(`%"${tag}"%`, limit, offset) as Record<string, unknown>[];
+      return rows.map((row) => this.rowToSkill(row));
+    }
+
+    const rows = this.db
+      .prepare('SELECT * FROM skills ORDER BY created_at DESC LIMIT ? OFFSET ?')
+      .all(limit, offset) as Record<string, unknown>[];
+    return rows.map((row) => this.rowToSkill(row));
+  }
+
+  deleteSkill(id: string): boolean {
+    const result = this.db.prepare('DELETE FROM skills WHERE id = ?').run(id);
+    return result.changes > 0;
+  }
+
   /* ── Sessions ── */
 
   insertSession(session: SessionRecord): void {
@@ -317,6 +384,27 @@ export class MetadataStoreService implements OnModuleInit, OnModuleDestroy {
       title: String(row['title']),
       uri: String(row['uri']),
       sourceUrl: row['source_url'] ? String(row['source_url']) : undefined,
+      l0Abstract: String(row['l0_abstract']),
+      l1Overview: String(row['l1_overview']),
+      l2Content: String(row['l2_content']),
+      createdAt: String(row['created_at']),
+      updatedAt: String(row['updated_at']),
+    };
+  }
+
+  private rowToSkill(row: Record<string, unknown>): SkillRecord {
+    let tags: string[] = [];
+    try {
+      tags = JSON.parse(String(row['tags'] ?? '[]')) as string[];
+    } catch {
+      tags = [];
+    }
+    return {
+      id: String(row['id']),
+      name: String(row['name']),
+      description: String(row['description']),
+      uri: String(row['uri']),
+      tags,
       l0Abstract: String(row['l0_abstract']),
       l1Overview: String(row['l1_overview']),
       l2Content: String(row['l2_content']),

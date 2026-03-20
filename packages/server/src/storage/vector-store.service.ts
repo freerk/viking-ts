@@ -24,6 +24,7 @@ export class VectorStoreService implements OnModuleInit {
   private readonly logger = new Logger(VectorStoreService.name);
   private memoriesIndex!: LocalIndex;
   private resourcesIndex!: LocalIndex;
+  private skillsIndex!: LocalIndex;
 
   constructor(private readonly config: ConfigService) {}
 
@@ -31,8 +32,9 @@ export class VectorStoreService implements OnModuleInit {
     const storagePath = this.config.get<string>('storage.path', '~/.viking-ts/data');
     const memoriesPath = join(storagePath, 'vectors', 'memories');
     const resourcesPath = join(storagePath, 'vectors', 'resources');
+    const skillsPath = join(storagePath, 'vectors', 'skills');
 
-    for (const dir of [memoriesPath, resourcesPath]) {
+    for (const dir of [memoriesPath, resourcesPath, skillsPath]) {
       if (!existsSync(dir)) {
         mkdirSync(dir, { recursive: true });
       }
@@ -40,6 +42,7 @@ export class VectorStoreService implements OnModuleInit {
 
     this.memoriesIndex = new LocalIndex(memoriesPath);
     this.resourcesIndex = new LocalIndex(resourcesPath);
+    this.skillsIndex = new LocalIndex(skillsPath);
 
     if (!(await this.memoriesIndex.isIndexCreated())) {
       await this.memoriesIndex.createIndex();
@@ -49,6 +52,11 @@ export class VectorStoreService implements OnModuleInit {
     if (!(await this.resourcesIndex.isIndexCreated())) {
       await this.resourcesIndex.createIndex();
       this.logger.log('Created resources vector index');
+    }
+
+    if (!(await this.skillsIndex.isIndexCreated())) {
+      await this.skillsIndex.createIndex();
+      this.logger.log('Created skills vector index');
     }
 
     this.logger.log(`Vector store initialized at ${storagePath}`);
@@ -131,6 +139,46 @@ export class VectorStoreService implements OnModuleInit {
     const existing = await this.resourcesIndex.getItem(id);
     if (existing) {
       await this.resourcesIndex.deleteItem(id);
+    }
+  }
+
+  async upsertSkill(
+    id: string,
+    vector: number[],
+    metadata: Record<string, MetadataTypes>,
+  ): Promise<void> {
+    const existing = await this.skillsIndex.getItem(id);
+    if (existing) {
+      await this.skillsIndex.deleteItem(id);
+    }
+    await this.skillsIndex.insertItem({
+      id,
+      vector,
+      metadata,
+    });
+  }
+
+  async searchSkills(
+    vector: number[],
+    limit: number,
+    scoreThreshold: number,
+  ): Promise<VectorSearchResult[]> {
+    const results = await this.skillsIndex.queryItems(vector, limit);
+    return results
+      .filter((r) => r.score >= scoreThreshold)
+      .map((r) => ({
+        id: r.item.id,
+        uri: String(r.item.metadata['uri'] ?? ''),
+        text: String(r.item.metadata['text'] ?? ''),
+        score: r.score,
+        metadata: r.item.metadata,
+      }));
+  }
+
+  async deleteSkill(id: string): Promise<void> {
+    const existing = await this.skillsIndex.getItem(id);
+    if (existing) {
+      await this.skillsIndex.deleteItem(id);
     }
   }
 }

@@ -39,6 +39,14 @@ export interface ContextEngine {
   info: { id: string; name: string; version: string };
   init(config: PluginConfig): Promise<void>;
   shutdown(): Promise<void>;
+  /**
+   * Set the active agent ID for subsequent calls.
+   * Priority order for resolving agentId:
+   *   1. Value set via setAgentId() (per-call override)
+   *   2. config.agentId (from plugin config at init time)
+   *   3. "default" (last resort fallback)
+   */
+  setAgentId(id: string): void;
   autoRecall(query: string): Promise<MemorySearchResult[]>;
   autoCapture(messages: ContextEngineMessage[]): Promise<number>;
   handleTool(
@@ -51,6 +59,17 @@ export function createContextEngine(): ContextEngine {
   let client: VikingClient | undefined;
   let processManager: ProcessManager | undefined;
   let config: PluginConfig;
+  let overrideAgentId: string | undefined;
+
+  /**
+   * Resolve agentId with priority:
+   *   1. overrideAgentId (set via setAgentId, per-call)
+   *   2. config.agentId (from plugin config)
+   *   3. "default" (last resort)
+   */
+  function resolveAgentId(): string {
+    return overrideAgentId ?? config.agentId ?? 'default';
+  }
 
   return {
     info: {
@@ -81,6 +100,13 @@ export function createContextEngine(): ContextEngine {
 
       if (config.agentId) {
         client.setAgentId(config.agentId);
+      }
+    },
+
+    setAgentId(id: string): void {
+      overrideAgentId = id;
+      if (client) {
+        client.setAgentId(id);
       }
     },
 
@@ -118,7 +144,7 @@ export function createContextEngine(): ContextEngine {
       if (eligibleMessages.length === 0) return 0;
 
       try {
-        const result = await client.captureSession(eligibleMessages, config.agentId);
+        const result = await client.captureSession(eligibleMessages, resolveAgentId());
         return result.memoriesExtracted;
       } catch {
         return 0;
@@ -142,7 +168,7 @@ export function createContextEngine(): ContextEngine {
         }
 
         try {
-          const memory = await client.commitMemory(text, category, config.agentId);
+          const memory = await client.commitMemory(text, category, resolveAgentId());
           return {
             content: `Memory stored successfully (id: ${memory.id}, category: ${category})`,
           };

@@ -70,6 +70,19 @@ export interface SearchResult {
   type?: string;
 }
 
+export interface SkillRecord {
+  id: string;
+  name: string;
+  description: string;
+  uri: string;
+  tags: string[];
+  l0Abstract: string;
+  l1Overview: string;
+  l2Content: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface VikingNode {
   uri: string;
   name: string;
