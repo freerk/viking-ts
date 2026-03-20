@@ -61,7 +61,7 @@ export class ResourceService {
       updatedAt: now,
     };
 
-    this.metadataStore.insertResource(resource);
+    await this.metadataStore.insertResource(resource);
 
     try {
       const vector = await this.embeddingService.embed(l0Abstract || content);
@@ -95,20 +95,20 @@ export class ResourceService {
     }));
   }
 
-  getResource(id: string): ResourceRecord {
-    const resource = this.metadataStore.getResourceById(id);
+  async getResource(id: string): Promise<ResourceRecord> {
+    const resource = await this.metadataStore.getResourceById(id);
     if (!resource) {
       throw new NotFoundException(`Resource ${id} not found`);
     }
     return resource;
   }
 
-  listResources(limit: number = 100, offset: number = 0): ResourceRecord[] {
+  async listResources(limit: number = 100, offset: number = 0): Promise<ResourceRecord[]> {
     return this.metadataStore.listResources(limit, offset);
   }
 
   async deleteResource(id: string): Promise<void> {
-    const deleted = this.metadataStore.deleteResource(id);
+    const deleted = await this.metadataStore.deleteResource(id);
     if (!deleted) {
       throw new NotFoundException(`Resource ${id} not found`);
     }

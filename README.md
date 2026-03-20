@@ -15,6 +15,7 @@ viking-ts/
 │   │   │   ├── embedding/   # OpenAI-compatible embedding service
 │   │   │   ├── llm/         # LLM service (L0/L1 generation, memory extraction)
 │   │   │   ├── storage/     # vectra vector DB + SQLite metadata
+│   │   │   ├── database/    # TypeORM entities, migrations, Postgres services
 │   │   │   └── health/      # Health check endpoint
 │   │   └── test/            # Jest tests
 │   └── openclaw-plugin/     # OpenClaw context-engine plugin
@@ -166,6 +167,50 @@ Environment variables override config file values. Any OpenAI-compatible endpoin
 ## API documentation
 
 Start the server and visit `http://localhost:1934/docs` for interactive Swagger documentation.
+
+## PostgreSQL backend
+
+By default, viking-ts uses SQLite + vectra for local/dev use. For production, you can switch to PostgreSQL with pgvector.
+
+### Requirements
+
+- PostgreSQL 14+ with the [pgvector](https://github.com/pgvector/pgvector) extension
+
+### Quick start with Docker
+
+```bash
+docker run -e POSTGRES_PASSWORD=postgres -p 5432:5432 pgvector/pgvector:pg16
+```
+
+### Enable Postgres backend
+
+```bash
+STORAGE_BACKEND=postgres \
+DB_HOST=localhost \
+DB_PORT=5432 \
+DB_USERNAME=postgres \
+DB_PASSWORD=postgres \
+DB_DATABASE=viking_ts \
+npm run start --workspace=packages/server
+```
+
+### Run migrations
+
+```bash
+DB_PASSWORD=postgres npm run migration:run --workspace=packages/server
+```
+
+### Environment variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `STORAGE_BACKEND` | `sqlite` | `sqlite` or `postgres` |
+| `DB_HOST` | `localhost` | PostgreSQL host |
+| `DB_PORT` | `5432` | PostgreSQL port |
+| `DB_USERNAME` | `postgres` | PostgreSQL username |
+| `DB_PASSWORD` | (none) | PostgreSQL password |
+| `DB_DATABASE` | `viking_ts` | PostgreSQL database name |
+| `DB_LOGGING` | `false` | Enable TypeORM query logging |
 
 ## Tech stack
 

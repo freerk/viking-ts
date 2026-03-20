@@ -41,9 +41,9 @@ export class MemoryController {
 
   @Get()
   @ApiOperation({ summary: 'List memories with optional filters' })
-  list(@Query() query: ListMemoriesQueryDto): ApiResponse<MemoryRecord[]> {
+  async list(@Query() query: ListMemoriesQueryDto): Promise<ApiResponse<MemoryRecord[]>> {
     const startTime = Date.now();
-    const memories = this.memoryService.listMemories({
+    const memories = await this.memoryService.listMemories({
       agentId: query.agentId,
       userId: query.userId,
       type: query.type as MemoryType | undefined,
@@ -56,9 +56,9 @@ export class MemoryController {
 
   @Get(':id')
   @ApiOperation({ summary: 'Get a specific memory' })
-  get(@Param('id') id: string): ApiResponse<MemoryRecord> {
+  async get(@Param('id') id: string): Promise<ApiResponse<MemoryRecord>> {
     const startTime = Date.now();
-    const memory = this.memoryService.getMemory(id);
+    const memory = await this.memoryService.getMemory(id);
     return okResponse(memory, startTime);
   }
 

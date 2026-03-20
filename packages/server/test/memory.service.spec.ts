@@ -107,7 +107,7 @@ describe('MemoryService', () => {
         text: 'Test memory content',
       });
 
-      const retrieved = metadataStore.getMemoryById(memory.id);
+      const retrieved = await metadataStore.getMemoryById(memory.id);
       expect(retrieved).toBeDefined();
       expect(retrieved?.text).toBe('Test memory content');
     });
@@ -160,7 +160,7 @@ describe('MemoryService', () => {
       const memory = await memoryService.createMemory({ text: 'Content with embed failure' });
 
       expect(memory.id).toBeDefined();
-      const retrieved = metadataStore.getMemoryById(memory.id);
+      const retrieved = await metadataStore.getMemoryById(memory.id);
       expect(retrieved).toBeDefined();
     });
 
@@ -199,15 +199,15 @@ describe('MemoryService', () => {
         agentId: 'agent-1',
       });
 
-      const userMemories = memoryService.listMemories({ type: 'user' });
+      const userMemories = await memoryService.listMemories({ type: 'user' });
       expect(userMemories).toHaveLength(1);
       expect(userMemories[0]?.text).toBe('Memory A');
 
-      const agentMemories = memoryService.listMemories({ type: 'agent' });
+      const agentMemories = await memoryService.listMemories({ type: 'agent' });
       expect(agentMemories).toHaveLength(1);
       expect(agentMemories[0]?.text).toBe('Memory B');
 
-      const allMemories = memoryService.listMemories({});
+      const allMemories = await memoryService.listMemories({});
       expect(allMemories).toHaveLength(2);
     });
 
@@ -216,13 +216,13 @@ describe('MemoryService', () => {
         await memoryService.createMemory({ text: `Memory ${i}` });
       }
 
-      const page1 = memoryService.listMemories({ limit: 2, offset: 0 });
+      const page1 = await memoryService.listMemories({ limit: 2, offset: 0 });
       expect(page1).toHaveLength(2);
 
-      const page2 = memoryService.listMemories({ limit: 2, offset: 2 });
+      const page2 = await memoryService.listMemories({ limit: 2, offset: 2 });
       expect(page2).toHaveLength(2);
 
-      const page3 = memoryService.listMemories({ limit: 2, offset: 4 });
+      const page3 = await memoryService.listMemories({ limit: 2, offset: 4 });
       expect(page3).toHaveLength(1);
     });
   });
@@ -230,12 +230,12 @@ describe('MemoryService', () => {
   describe('getMemory', () => {
     it('should return a specific memory by ID', async () => {
       const created = await memoryService.createMemory({ text: 'Find me' });
-      const found = memoryService.getMemory(created.id);
+      const found = await memoryService.getMemory(created.id);
       expect(found.text).toBe('Find me');
     });
 
-    it('should throw NotFoundException for missing ID', () => {
-      expect(() => memoryService.getMemory('nonexistent')).toThrow();
+    it('should throw NotFoundException for missing ID', async () => {
+      await expect(memoryService.getMemory('nonexistent')).rejects.toThrow();
     });
   });
 
@@ -244,7 +244,7 @@ describe('MemoryService', () => {
       const memory = await memoryService.createMemory({ text: 'Delete me' });
       await memoryService.deleteMemory(memory.id);
 
-      expect(() => memoryService.getMemory(memory.id)).toThrow();
+      await expect(memoryService.getMemory(memory.id)).rejects.toThrow();
     });
 
     it('should throw NotFoundException for missing ID', async () => {
@@ -333,7 +333,7 @@ describe('MemoryService', () => {
 
       await memoryService.captureSession(messages);
 
-      const allMemories = metadataStore.listMemories({});
+      const allMemories = await metadataStore.listMemories({});
       expect(allMemories.length).toBeGreaterThanOrEqual(1);
     });
 

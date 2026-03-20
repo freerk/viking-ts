@@ -152,7 +152,7 @@ describe('ResourceService', () => {
         text: 'Stored content',
       });
 
-      const retrieved = metadataStore.getResourceById(resource.id);
+      const retrieved = await metadataStore.getResourceById(resource.id);
       expect(retrieved).toBeDefined();
       expect(retrieved?.l2Content).toBe('Stored content');
     });
@@ -179,7 +179,7 @@ describe('ResourceService', () => {
       });
 
       expect(resource.id).toBeDefined();
-      const retrieved = metadataStore.getResourceById(resource.id);
+      const retrieved = await metadataStore.getResourceById(resource.id);
       expect(retrieved).toBeDefined();
     });
   });
@@ -187,13 +187,13 @@ describe('ResourceService', () => {
   describe('getResource', () => {
     it('should return a resource by ID', async () => {
       const created = await resourceService.createResource({ text: 'Find me' });
-      const found = resourceService.getResource(created.id);
+      const found = await resourceService.getResource(created.id);
       expect(found.id).toBe(created.id);
       expect(found.l2Content).toBe('Find me');
     });
 
-    it('should throw NotFoundException for missing ID', () => {
-      expect(() => resourceService.getResource('non-existent')).toThrow(NotFoundException);
+    it('should throw NotFoundException for missing ID', async () => {
+      await expect(resourceService.getResource('non-existent')).rejects.toThrow(NotFoundException);
     });
   });
 
@@ -202,12 +202,12 @@ describe('ResourceService', () => {
       await resourceService.createResource({ text: 'Res 1' });
       await resourceService.createResource({ text: 'Res 2' });
 
-      const all = resourceService.listResources();
+      const all = await resourceService.listResources();
       expect(all).toHaveLength(2);
     });
 
-    it('should return empty array when no resources exist', () => {
-      const result = resourceService.listResources();
+    it('should return empty array when no resources exist', async () => {
+      const result = await resourceService.listResources();
       expect(result).toHaveLength(0);
     });
 
@@ -216,10 +216,10 @@ describe('ResourceService', () => {
         await resourceService.createResource({ text: `Res ${i}` });
       }
 
-      const page1 = resourceService.listResources(2, 0);
+      const page1 = await resourceService.listResources(2, 0);
       expect(page1).toHaveLength(2);
 
-      const page2 = resourceService.listResources(2, 2);
+      const page2 = await resourceService.listResources(2, 2);
       expect(page2).toHaveLength(2);
     });
   });
@@ -229,7 +229,7 @@ describe('ResourceService', () => {
       const resource = await resourceService.createResource({ text: 'Delete me' });
       await resourceService.deleteResource(resource.id);
 
-      expect(() => resourceService.getResource(resource.id)).toThrow(NotFoundException);
+      await expect(resourceService.getResource(resource.id)).rejects.toThrow(NotFoundException);
     });
 
     it('should throw NotFoundException for missing ID', async () => {

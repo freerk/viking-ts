@@ -57,7 +57,7 @@ export class SkillService {
       updatedAt: now,
     };
 
-    this.metadataStore.insertSkill(skill);
+    await this.metadataStore.insertSkill(skill);
 
     try {
       const vector = await this.embeddingService.embed(l0Abstract || params.content);
@@ -92,20 +92,20 @@ export class SkillService {
     }));
   }
 
-  getSkill(id: string): SkillRecord {
-    const skill = this.metadataStore.getSkillById(id);
+  async getSkill(id: string): Promise<SkillRecord> {
+    const skill = await this.metadataStore.getSkillById(id);
     if (!skill) {
       throw new NotFoundException(`Skill ${id} not found`);
     }
     return skill;
   }
 
-  listSkills(limit: number = 100, offset: number = 0, tag?: string): SkillRecord[] {
+  async listSkills(limit: number = 100, offset: number = 0, tag?: string): Promise<SkillRecord[]> {
     return this.metadataStore.listSkills(limit, offset, tag);
   }
 
   async deleteSkill(id: string): Promise<void> {
-    const deleted = this.metadataStore.deleteSkill(id);
+    const deleted = await this.metadataStore.deleteSkill(id);
     if (!deleted) {
       throw new NotFoundException(`Skill ${id} not found`);
     }

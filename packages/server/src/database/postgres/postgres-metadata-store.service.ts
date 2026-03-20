@@ -4,12 +4,16 @@ import { Repository } from 'typeorm';
 import { MemoryEntity } from '../entities/memory.entity';
 import { ResourceEntity } from '../entities/resource.entity';
 import { SkillEntity } from '../entities/skill.entity';
+import { SessionEntity } from '../entities/session.entity';
+import { SessionMessageEntity } from '../entities/session-message.entity';
 import {
   MemoryRecord,
   MemoryType,
   MemoryCategory,
   ResourceRecord,
   SkillRecord,
+  SessionRecord,
+  SessionMessage,
 } from '../../shared/types';
 
 @Injectable()
@@ -23,6 +27,10 @@ export class PostgresMetadataStoreService {
     private readonly resourceRepo: Repository<ResourceEntity>,
     @InjectRepository(SkillEntity)
     private readonly skillRepo: Repository<SkillEntity>,
+    @InjectRepository(SessionEntity)
+    private readonly sessionRepo: Repository<SessionEntity>,
+    @InjectRepository(SessionMessageEntity)
+    private readonly sessionMessageRepo: Repository<SessionMessageEntity>,
   ) {
     this.logger.log('Postgres metadata store initialized');
   }
@@ -41,7 +49,7 @@ export class PostgresMetadataStoreService {
       l0Abstract: memory.l0Abstract || null,
       l1Overview: memory.l1Overview || null,
       l2Content: memory.l2Content,
-      embedding: [],
+      embedding: null,
     });
   }
 
@@ -61,10 +69,10 @@ export class PostgresMetadataStoreService {
     const qb = this.memoryRepo.createQueryBuilder('m');
 
     if (filters.agentId) {
-      qb.andWhere('m.agentId = :agentId', { agentId: filters.agentId });
+      qb.andWhere('m.agent_id = :agentId', { agentId: filters.agentId });
     }
     if (filters.userId) {
-      qb.andWhere('m.userId = :userId', { userId: filters.userId });
+      qb.andWhere('m.user_id = :userId', { userId: filters.userId });
     }
     if (filters.type) {
       qb.andWhere('m.type = :type', { type: filters.type });
@@ -73,7 +81,7 @@ export class PostgresMetadataStoreService {
       qb.andWhere('m.category = :category', { category: filters.category });
     }
 
-    qb.orderBy('m.createdAt', 'DESC')
+    qb.orderBy('m.created_at', 'DESC')
       .take(filters.limit ?? 100)
       .skip(filters.offset ?? 0);
 
@@ -114,7 +122,7 @@ export class PostgresMetadataStoreService {
       l0Abstract: resource.l0Abstract || null,
       l1Overview: resource.l1Overview || null,
       l2Content: resource.l2Content,
-      embedding: [],
+      embedding: null,
     });
   }
 
@@ -149,7 +157,7 @@ export class PostgresMetadataStoreService {
       l0Abstract: skill.l0Abstract || null,
       l1Overview: skill.l1Overview || null,
       l2Content: skill.l2Content,
-      embedding: [],
+      embedding: null,
     });
   }
 
@@ -163,7 +171,7 @@ export class PostgresMetadataStoreService {
       const entities = await this.skillRepo
         .createQueryBuilder('s')
         .where('s.tags @> :tag', { tag: JSON.stringify([tag]) })
-        .orderBy('s.createdAt', 'DESC')
+        .orderBy('s.created_at', 'DESC')
         .take(limit)
         .skip(offset)
         .getMany();
@@ -181,6 +189,56 @@ export class PostgresMetadataStoreService {
   async deleteSkill(id: string): Promise<boolean> {
     const result = await this.skillRepo.delete(id);
     return (result.affected ?? 0) > 0;
+  }
+
+  /* ── Sessions ── */
+
+  async insertSession(session: SessionRecord): Promise<void> {
+    await this.sessionRepo.save({
+      id: session.id,
+      agentId: session.agentId ?? null,
+      userId: session.userId ?? null,
+    });
+  }
+
+  async getSessionById(id: string): Promise<SessionRecord | undefined> {
+    const entity = await this.sessionRepo.findOne({ where: { id } });
+    if (!entity) return undefined;
+    return {
+      id: entity.id,
+      agentId: entity.agentId ?? undefined,
+      userId: entity.userId ?? undefined,
+      createdAt: entity.createdAt.toISOString(),
+      updatedAt: entity.updatedAt.toISOString(),
+    };
+  }
+
+  async deleteSession(id: string): Promise<boolean> {
+    const result = await this.sessionRepo.delete(id);
+    return (result.affected ?? 0) > 0;
+  }
+
+  async insertSessionMessage(message: SessionMessage): Promise<void> {
+    await this.sessionMessageRepo.save({
+      id: message.id,
+      sessionId: message.sessionId,
+      role: message.role,
+      content: message.content,
+    });
+  }
+
+  async getSessionMessages(sessionId: string): Promise<SessionMessage[]> {
+    const entities = await this.sessionMessageRepo.find({
+      where: { sessionId },
+      order: { createdAt: 'ASC' },
+    });
+    return entities.map((e) => ({
+      id: e.id,
+      sessionId: e.sessionId,
+      role: e.role as 'user' | 'assistant',
+      content: e.content,
+      createdAt: e.createdAt.toISOString(),
+    }));
   }
 
   /* ── Entity mappers ── */
