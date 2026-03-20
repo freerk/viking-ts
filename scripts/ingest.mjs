@@ -4,20 +4,8 @@
  * Comprehensive ingest + sync CLI for viking-ts.
  * Replaces ingest-simon.mjs with multi-agent support, resources, and skills.
  *
- * Usage:
- *   node scripts/ingest.mjs [options]
- *
- *   --agent <id>            Only ingest for this agent. Default: all agents
- *   --no-workspace          Skip workspace MEMORY.md + memory/*.md
- *   --no-sessions           Skip session .jsonl files
- *   --no-identity           Skip SOUL.md, IDENTITY.md, AGENTS.md, USER.md
- *   --resources <dir>       Ingest directory as resources (repeatable)
- *   --resource-prefix <p>   URI prefix for --resources (default: viking://resources/<dirname>)
- *   --skills <dir>          Ingest directory of SKILL.md files into /api/v1/skills (repeatable)
- *   --sync-skills           Sync mode: delete skills in viking-ts that no longer exist on disk
- *   --base-url <url>        Server URL (default: http://localhost:1934)
- *   --dry-run               Print plan, don't POST/DELETE
- *   --help
+ * Idempotent by default: checks existing URIs before posting.
+ * Use --force to skip dedup checks and re-ingest everything.
  */
 
 import { readFileSync, readdirSync, statSync, existsSync } from 'fs';
@@ -30,11 +18,11 @@ const DELAY_MS = 200;
 const IDENTITY_FILES = ['SOUL.md', 'IDENTITY.md', 'AGENTS.md', 'USER.md'];
 
 const counters = {
-  identity: { ingested: 0, skipped: 0, errors: 0 },
-  workspace: { ingested: 0, skipped: 0, errors: 0 },
+  identity: { ingested: 0, skipped: 0, existed: 0, errors: 0 },
+  workspace: { ingested: 0, skipped: 0, existed: 0, errors: 0 },
   sessions: { ingested: 0, skipped: 0, errors: 0 },
-  resources: { ingested: 0, skipped: 0, errors: 0 },
-  skills: { ingested: 0, skipped: 0, errors: 0 },
+  resources: { ingested: 0, skipped: 0, existed: 0, errors: 0 },
+  skills: { ingested: 0, skipped: 0, existed: 0, errors: 0 },
   skillSync: { deleted: 0, kept: 0 },
 };
 
@@ -72,6 +60,7 @@ function parseCliArgs() {
       'no-workspace': { type: 'boolean', default: false },
       'no-sessions': { type: 'boolean', default: false },
       'no-identity': { type: 'boolean', default: false },
+      force: { type: 'boolean', default: false },
       resources: { type: 'string', multiple: true, default: [] },
       'resource-prefix': { type: 'string' },
       skills: { type: 'string', multiple: true, default: [] },
@@ -85,6 +74,43 @@ function parseCliArgs() {
   });
 
   return values;
+}
+
+function printHelp() {
+  console.log(`Usage: node scripts/ingest.mjs [options]
+
+Options:
+  --agent <id>            Only ingest for this agent (default: all agents)
+  --no-workspace          Skip workspace MEMORY.md + memory/*.md
+  --no-sessions           Skip session .jsonl files
+  --no-identity           Skip SOUL.md, IDENTITY.md, AGENTS.md, USER.md
+  --force                 Skip dedup checks, re-ingest everything (default: idempotent)
+  --resources <dir>       Ingest directory as resources (repeatable)
+  --resource-prefix <p>   URI prefix for --resources (default: viking://resources/<dirname>)
+  --skills <dir>          Ingest directory of SKILL.md files into /api/v1/skills (repeatable)
+  --sync-skills           Delete skills in viking-ts that no longer exist on disk
+  --base-url <url>        Server URL (default: http://localhost:1934)
+  --dry-run               Print plan, don't POST/DELETE
+  --help                  Show this help message
+
+Examples:
+  # First-time full ingest for all agents + skills
+  node scripts/ingest.mjs --skills ~/apps/openclaw/skills
+
+  # Re-run safely (skips what's already ingested)
+  node scripts/ingest.mjs --skills ~/apps/openclaw/skills
+
+  # Force re-ingest everything
+  node scripts/ingest.mjs --force --skills ~/apps/openclaw/skills
+
+  # Only Simon, with Whisperline project docs
+  node scripts/ingest.mjs --agent simon --resources ~/.openclaw/workspace/projects/whisperline
+
+  # Sync skills after removing one from OpenClaw
+  node scripts/ingest.mjs --skills ~/apps/openclaw/skills --sync-skills
+
+  # Dry-run to preview
+  node scripts/ingest.mjs --dry-run --agent simon`);
 }
 
 function loadAgents(filterAgentId) {
@@ -152,12 +178,68 @@ async function httpGet(baseUrl, endpoint) {
   return res.json();
 }
 
+// ─── Existing URI cache ───────────────────────────────────────────────────────
+
+async function fetchExistingUris(baseUrl, force, dryRun) {
+  const existing = {
+    memories: new Map(),
+    skills: new Set(),
+    resources: new Set(),
+  };
+
+  if (force || dryRun) return existing;
+
+  console.log('  Fetching existing items for dedup...');
+
+  try {
+    const memRes = await httpGet(baseUrl, '/api/v1/memories?limit=5000');
+    const memories = memRes.result ?? memRes.data ?? [];
+    for (const m of memories) {
+      if (m.uri) {
+        const key = `${m.agentId ?? ''}::${m.uri}`;
+        existing.memories.set(key, true);
+      }
+    }
+    console.log(`    Memories: ${existing.memories.size} existing URIs cached`);
+  } catch (e) {
+    console.warn(`    Warning: could not fetch existing memories: ${e.message}`);
+  }
+
+  try {
+    const skillRes = await httpGet(baseUrl, '/api/v1/skills?limit=1000');
+    const skills = skillRes.result ?? skillRes.data ?? [];
+    for (const s of skills) {
+      if (s.uri) existing.skills.add(s.uri);
+    }
+    console.log(`    Skills: ${existing.skills.size} existing URIs cached`);
+  } catch (e) {
+    console.warn(`    Warning: could not fetch existing skills: ${e.message}`);
+  }
+
+  try {
+    const resRes = await httpGet(baseUrl, '/api/v1/resources?limit=5000');
+    const resources = resRes.result ?? resRes.data ?? [];
+    for (const r of resources) {
+      if (r.uri) existing.resources.add(r.uri);
+    }
+    console.log(`    Resources: ${existing.resources.size} existing URIs cached`);
+  } catch (e) {
+    console.warn(`    Warning: could not fetch existing resources: ${e.message}`);
+  }
+
+  return existing;
+}
+
+function memoryExists(existing, agentId, uri) {
+  return existing.memories.has(`${agentId ?? ''}::${uri}`);
+}
+
 // ─── Identity files ──────────────────────────────────────────────────────────
 
-async function ingestIdentity(agent, baseUrl, dryRun) {
+async function ingestIdentity(agent, baseUrl, dryRun, existing) {
   if (!agent.workspace) return;
 
-  console.log(`\n  Identity files for ${agent.id}...`);
+  const labels = [];
 
   for (const fname of IDENTITY_FILES) {
     const file = join(agent.workspace, fname);
@@ -173,36 +255,53 @@ async function ingestIdentity(agent, baseUrl, dryRun) {
       continue;
     }
 
+    const uri = `viking://agent/memories/identity/${fname}`;
+
+    if (memoryExists(existing, agent.id, uri)) {
+      labels.push(`${fname} (exists)`);
+      counters.identity.existed++;
+      continue;
+    }
+
     try {
       await post(baseUrl, '/api/v1/memories', {
         text: content,
         type: 'agent',
         category: 'profile',
         agentId: agent.id,
-        uri: `viking://agent/memories/identity/${fname}`,
+        uri,
       }, dryRun);
-      console.log(`    + ${fname}`);
+      labels.push(fname);
       counters.identity.ingested++;
     } catch (e) {
-      console.error(`    x ${fname}: ${e.message}`);
+      labels.push(`${fname} (error)`);
       counters.identity.errors++;
     }
     await sleep(DELAY_MS);
+  }
+
+  if (labels.length > 0) {
+    const formatted = labels.map((l) => {
+      if (l.includes('(exists)')) return `${l.replace(' (exists)', '')} (skipped, exists)`;
+      if (l.includes('(error)')) return l;
+      return `${l} \u2714`;
+    });
+    console.log(`  \uD83E\uDDEC identity: ${formatted.join('  ')}`);
   }
 }
 
 // ─── Workspace memory files ──────────────────────────────────────────────────
 
-async function ingestWorkspace(agent, baseUrl, dryRun) {
+async function ingestWorkspace(agent, baseUrl, dryRun, existing) {
   if (!agent.workspace) return;
-
-  console.log(`\n  Workspace memory for ${agent.id}...`);
 
   const memoryDir = join(agent.workspace, 'memory');
   const files = [
     join(agent.workspace, 'MEMORY.md'),
     ...walkFiles(memoryDir).filter((f) => !f.endsWith('.json')),
   ];
+
+  const labels = [];
 
   for (const file of files) {
     let content;
@@ -218,21 +317,36 @@ async function ingestWorkspace(agent, baseUrl, dryRun) {
     }
 
     const label = relative(agent.workspace, file);
+    const uri = `viking://agent/memories/workspace/${basename(file)}`;
+
+    if (memoryExists(existing, agent.id, uri)) {
+      labels.push(`${label} (skipped, exists)`);
+      counters.workspace.existed++;
+      continue;
+    }
+
     try {
       await post(baseUrl, '/api/v1/memories', {
         text: content,
         type: 'agent',
         category: 'general',
         agentId: agent.id,
-        uri: `viking://agent/memories/workspace/${basename(file)}`,
+        uri,
       }, dryRun);
-      console.log(`    + ${label}`);
+      labels.push(`${label} \u2714`);
       counters.workspace.ingested++;
     } catch (e) {
-      console.error(`    x ${label}: ${e.message}`);
+      labels.push(`${label} (error)`);
       counters.workspace.errors++;
     }
     await sleep(DELAY_MS);
+  }
+
+  if (labels.length > 0) {
+    console.log(`  \uD83D\uDCDD workspace: ${labels.length} files`);
+    for (const l of labels) {
+      console.log(`    ${l}`);
+    }
   }
 }
 
@@ -317,7 +431,7 @@ async function ingestSessions(agent, baseUrl, dryRun) {
 
 // ─── Resources ───────────────────────────────────────────────────────────────
 
-async function ingestResources(dirs, resourcePrefix, baseUrl, dryRun) {
+async function ingestResources(dirs, resourcePrefix, baseUrl, dryRun, existing) {
   for (const dir of dirs) {
     const resolvedDir = dir.startsWith('/') ? dir : join(process.cwd(), dir);
     const dirName = basename(resolvedDir);
@@ -341,6 +455,12 @@ async function ingestResources(dirs, resourcePrefix, baseUrl, dryRun) {
 
       const relPath = relative(resolvedDir, file);
       const uri = `${prefix}/${relPath}`;
+
+      if (existing.resources.has(uri)) {
+        console.log(`    = ${relPath} (skipped, exists)`);
+        counters.resources.existed++;
+        continue;
+      }
 
       try {
         await post(baseUrl, '/api/v1/resources', {
@@ -398,7 +518,7 @@ function discoverSkillDirs(baseDir) {
   return skills;
 }
 
-async function ingestSkills(dirs, baseUrl, dryRun) {
+async function ingestSkills(dirs, baseUrl, dryRun, existing) {
   const ingestedUris = new Set();
 
   for (const dir of dirs) {
@@ -427,6 +547,12 @@ async function ingestSkills(dirs, baseUrl, dryRun) {
       const uri = `viking://agent/skills/${name}/`;
 
       ingestedUris.add(uri);
+
+      if (existing.skills.has(uri)) {
+        console.log(`    = ${name} (skipped, exists)`);
+        counters.skills.existed++;
+        continue;
+      }
 
       try {
         await post(baseUrl, '/api/v1/skills', {
@@ -485,24 +611,13 @@ async function main() {
   const opts = parseCliArgs();
 
   if (opts.help) {
-    console.log(`Usage: node scripts/ingest.mjs [options]
-
-  --agent <id>            Only ingest for this agent. Default: all agents
-  --no-workspace          Skip workspace MEMORY.md + memory/*.md
-  --no-sessions           Skip session .jsonl files
-  --no-identity           Skip SOUL.md, IDENTITY.md, AGENTS.md, USER.md
-  --resources <dir>       Ingest directory as resources (repeatable)
-  --resource-prefix <p>   URI prefix for --resources (default: viking://resources/<dirname>)
-  --skills <dir>          Ingest directory of SKILL.md files into /api/v1/skills (repeatable)
-  --sync-skills           Sync mode: delete skills not found on disk
-  --base-url <url>        Server URL (default: http://localhost:1934)
-  --dry-run               Print plan, don't POST/DELETE
-  --help`);
+    printHelp();
     process.exit(0);
   }
 
   const baseUrl = opts['base-url'] ?? 'http://localhost:1934';
   const dryRun = opts['dry-run'] ?? false;
+  const force = opts.force ?? false;
   const skipWorkspace = opts['no-workspace'] ?? false;
   const skipSessions = opts['no-sessions'] ?? false;
   const skipIdentity = opts['no-identity'] ?? false;
@@ -514,6 +629,7 @@ async function main() {
   console.log('viking-ts ingest');
   console.log(`  Target: ${baseUrl}`);
   if (dryRun) console.log('  Mode: DRY-RUN (no changes will be made)');
+  if (force) console.log('  Mode: FORCE (skipping dedup checks)');
 
   // Health check (skip in dry-run)
   if (!dryRun) {
@@ -530,16 +646,19 @@ async function main() {
   const agents = loadAgents(opts.agent);
   console.log(`  Agents: ${agents.map((a) => a.id).join(', ')}`);
 
+  // Fetch existing URIs once for dedup
+  const existing = await fetchExistingUris(baseUrl, force, dryRun);
+
   // Per-agent ingestion
   for (const agent of agents) {
     console.log(`\n--- Agent: ${agent.id} ---`);
 
     if (!skipIdentity) {
-      await ingestIdentity(agent, baseUrl, dryRun);
+      await ingestIdentity(agent, baseUrl, dryRun, existing);
     }
 
     if (!skipWorkspace) {
-      await ingestWorkspace(agent, baseUrl, dryRun);
+      await ingestWorkspace(agent, baseUrl, dryRun, existing);
     }
 
     if (!skipSessions) {
@@ -549,13 +668,13 @@ async function main() {
 
   // Resources (not per-agent)
   if (resourceDirs.length > 0) {
-    await ingestResources(resourceDirs, resourcePrefix, baseUrl, dryRun);
+    await ingestResources(resourceDirs, resourcePrefix, baseUrl, dryRun, existing);
   }
 
   // Skills (not per-agent)
   let ingestedSkillUris = new Set();
   if (skillDirs.length > 0) {
-    ingestedSkillUris = await ingestSkills(skillDirs, baseUrl, dryRun);
+    ingestedSkillUris = await ingestSkills(skillDirs, baseUrl, dryRun, existing);
   }
 
   // Skill sync
@@ -564,23 +683,25 @@ async function main() {
   }
 
   // Summary
-  console.log('\n========================================');
-  console.log('Summary:');
-  console.log(`  Identity:  ingested=${counters.identity.ingested}  skipped=${counters.identity.skipped}  errors=${counters.identity.errors}`);
-  console.log(`  Workspace: ingested=${counters.workspace.ingested}  skipped=${counters.workspace.skipped}  errors=${counters.workspace.errors}`);
-  console.log(`  Sessions:  ingested=${counters.sessions.ingested}  skipped=${counters.sessions.skipped}  errors=${counters.sessions.errors}`);
-  console.log(`  Resources: ingested=${counters.resources.ingested}  skipped=${counters.resources.skipped}  errors=${counters.resources.errors}`);
-  console.log(`  Skills:    ingested=${counters.skills.ingested}  skipped=${counters.skills.skipped}  errors=${counters.skills.errors}`);
-  if (syncSkillsFlag) {
-    console.log(`  Skill sync: deleted=${counters.skillSync.deleted}  kept=${counters.skillSync.kept}`);
-  }
-
+  const totalExisted = counters.identity.existed + counters.workspace.existed +
+    counters.resources.existed + counters.skills.existed;
   const totalIngested = counters.identity.ingested + counters.workspace.ingested +
     counters.sessions.ingested + counters.resources.ingested + counters.skills.ingested;
   const totalErrors = counters.identity.errors + counters.workspace.errors +
     counters.sessions.errors + counters.resources.errors + counters.skills.errors;
 
-  console.log(`\n  Total: ${totalIngested} ingested, ${totalErrors} errors`);
+  console.log('\n========================================');
+  console.log('Summary:');
+  console.log(`  Identity:  ingested=${counters.identity.ingested}  existed=${counters.identity.existed}  skipped=${counters.identity.skipped}  errors=${counters.identity.errors}`);
+  console.log(`  Workspace: ingested=${counters.workspace.ingested}  existed=${counters.workspace.existed}  skipped=${counters.workspace.skipped}  errors=${counters.workspace.errors}`);
+  console.log(`  Sessions:  ingested=${counters.sessions.ingested}  skipped=${counters.sessions.skipped}  errors=${counters.sessions.errors}`);
+  console.log(`  Resources: ingested=${counters.resources.ingested}  existed=${counters.resources.existed}  skipped=${counters.resources.skipped}  errors=${counters.resources.errors}`);
+  console.log(`  Skills:    ingested=${counters.skills.ingested}  existed=${counters.skills.existed}  skipped=${counters.skills.skipped}  errors=${counters.skills.errors}`);
+  if (syncSkillsFlag) {
+    console.log(`  Skill sync: deleted=${counters.skillSync.deleted}  kept=${counters.skillSync.kept}`);
+  }
+
+  console.log(`\n  Total: ${totalIngested} ingested, ${totalExisted} existed (skipped), ${totalErrors} errors`);
   if (dryRun) console.log('  (DRY-RUN: no actual changes were made)');
 }
 
