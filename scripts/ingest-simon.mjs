@@ -184,7 +184,7 @@ async function ingestWhisperlineProject() {
       await post('/api/v1/resources', {
         title: `whisperline > ${relPath.replace(/\//g, ' > ').replace('.md', '')}`,
         text: content,
-        url: uri,
+        uri,
       });
       console.log(`  ✔ ${relPath}`);
       ingested++;
