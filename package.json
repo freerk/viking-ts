@@ -5,7 +5,8 @@
   "description": "TypeScript-native context database for AI agents",
   "workspaces": [
     "packages/server",
-    "packages/openclaw-plugin"
+    "packages/openclaw-plugin",
+    "packages/mcp-server"
   ],
   "scripts": {
     "build": "npm run build --workspaces",

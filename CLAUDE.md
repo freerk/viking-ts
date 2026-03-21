@@ -23,12 +23,14 @@ npm test
 # Type check (no emit)
 cd packages/server && npx tsc --noEmit
 cd packages/openclaw-plugin && npx tsc --noEmit
+cd packages/mcp-server && npx tsc --noEmit
 ```
 
 ## Project structure
 
 - `packages/server` - NestJS REST API server (port 1934)
 - `packages/openclaw-plugin` - OpenClaw context-engine plugin
+- `packages/mcp-server` - MCP server for claude.ai integration (port 3001)
 
 ## Environment variables
 
@@ -45,6 +47,12 @@ LLM_PROVIDER=openai
 LLM_MODEL=gpt-4o-mini
 LLM_API_KEY=sk-...
 LLM_API_BASE=https://api.openai.com/v1
+
+# MCP server
+MCP_AUTH_TOKEN=<required, no default>
+VIKING_TS_URL=http://127.0.0.1:1934
+MCP_PORT=3001
+MCP_HOST=0.0.0.0
 ```
 
 ## Key API endpoints
