@@ -2,21 +2,18 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigModule } from '@nestjs/config';
 import { LlmService } from '../src/llm/llm.service';
 
-const mockCreate = jest.fn();
+const mockGenerateText = jest.fn();
 
-jest.mock('openai', () => {
-  return {
-    __esModule: true,
-    default: jest.fn().mockImplementation(() => ({
-      chat: { completions: { create: mockCreate } },
-    })),
-  };
-});
+jest.mock('ai', () => ({
+  generateText: (...args: unknown[]) => mockGenerateText(...args),
+}));
+
+jest.mock('../src/llm/providers', () => ({
+  getLanguageModel: jest.fn().mockReturnValue({ modelId: 'test-model' }),
+}));
 
 function mockCompletion(content: string): void {
-  mockCreate.mockResolvedValueOnce({
-    choices: [{ message: { content } }],
-  });
+  mockGenerateText.mockResolvedValueOnce({ text: content });
 }
 
 describe('LlmService', () => {
@@ -24,7 +21,7 @@ describe('LlmService', () => {
   let service: LlmService;
 
   beforeEach(async () => {
-    mockCreate.mockReset();
+    mockGenerateText.mockReset();
 
     module = await Test.createTestingModule({
       imports: [
@@ -61,23 +58,21 @@ describe('LlmService', () => {
     });
 
     it('should throw when no completion returned', async () => {
-      mockCreate.mockResolvedValueOnce({ choices: [] });
+      mockGenerateText.mockResolvedValueOnce({ text: '' });
       await expect(service.complete('system', 'user')).rejects.toThrow(
         'No completion returned from LLM provider',
       );
     });
 
-    it('should throw when message content is null', async () => {
-      mockCreate.mockResolvedValueOnce({
-        choices: [{ message: { content: null } }],
-      });
+    it('should throw when text is null', async () => {
+      mockGenerateText.mockResolvedValueOnce({ text: null });
       await expect(service.complete('system', 'user')).rejects.toThrow(
         'No completion returned from LLM provider',
       );
     });
 
     it('should propagate API errors', async () => {
-      mockCreate.mockRejectedValueOnce(new Error('Service unavailable'));
+      mockGenerateText.mockRejectedValueOnce(new Error('Service unavailable'));
       await expect(service.complete('system', 'user')).rejects.toThrow('Service unavailable');
     });
   });
@@ -87,8 +82,8 @@ describe('LlmService', () => {
       mockCompletion('A concise abstract of the content.');
       const result = await service.generateAbstract('Long content here...');
       expect(result).toBe('A concise abstract of the content.');
-      expect(mockCreate).toHaveBeenCalledWith(
-        expect.objectContaining({ max_tokens: 100 }),
+      expect(mockGenerateText).toHaveBeenCalledWith(
+        expect.objectContaining({ maxOutputTokens: 100 }),
       );
     });
   });
@@ -98,8 +93,8 @@ describe('LlmService', () => {
       mockCompletion('- Key point 1\n- Key point 2');
       const result = await service.generateOverview('Long content here...');
       expect(result).toBe('- Key point 1\n- Key point 2');
-      expect(mockCreate).toHaveBeenCalledWith(
-        expect.objectContaining({ max_tokens: 600 }),
+      expect(mockGenerateText).toHaveBeenCalledWith(
+        expect.objectContaining({ maxOutputTokens: 600 }),
       );
     });
   });
@@ -180,13 +175,10 @@ describe('LlmService', () => {
         { role: 'assistant', content: 'Hi there' },
       ]);
 
-      expect(mockCreate).toHaveBeenCalledTimes(1);
-      const callArgs = mockCreate.mock.calls[0]?.[0];
-      const userMessage = callArgs?.messages?.find(
-        (m: { role: string }) => m.role === 'user',
-      );
-      expect(userMessage?.content).toContain('user: Hello');
-      expect(userMessage?.content).toContain('assistant: Hi there');
+      expect(mockGenerateText).toHaveBeenCalledTimes(1);
+      const callArgs = mockGenerateText.mock.calls[0]?.[0];
+      expect(callArgs?.prompt).toContain('user: Hello');
+      expect(callArgs?.prompt).toContain('assistant: Hi there');
     });
 
     it('should handle multiple valid memories in response', async () => {
@@ -235,7 +227,7 @@ describe('LlmService', () => {
       mockCompletion('Test');
       await service.complete('system', 'user');
 
-      expect(mockCreate).toHaveBeenCalledWith(
+      expect(mockGenerateText).toHaveBeenCalledWith(
         expect.objectContaining({ temperature: 0 }),
       );
     });
@@ -244,8 +236,8 @@ describe('LlmService', () => {
       mockCompletion('Test');
       await service.complete('system', 'user', 512);
 
-      expect(mockCreate).toHaveBeenCalledWith(
-        expect.objectContaining({ max_tokens: 512 }),
+      expect(mockGenerateText).toHaveBeenCalledWith(
+        expect.objectContaining({ maxOutputTokens: 512 }),
       );
     });
 
@@ -253,8 +245,8 @@ describe('LlmService', () => {
       mockCompletion('Test');
       await service.complete('system', 'user');
 
-      expect(mockCreate).toHaveBeenCalledWith(
-        expect.objectContaining({ max_tokens: 1024 }),
+      expect(mockGenerateText).toHaveBeenCalledWith(
+        expect.objectContaining({ maxOutputTokens: 1024 }),
       );
     });
   });
