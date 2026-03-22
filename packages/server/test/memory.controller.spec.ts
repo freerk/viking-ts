@@ -208,7 +208,7 @@ describe('MemoryController (HTTP)', () => {
 
   describe('GET /api/v1/memories', () => {
     it('should list memories', async () => {
-      memoryService.listMemories!.mockReturnValue([makeMemoryRecord()]);
+      memoryService.listMemories!.mockResolvedValue([makeMemoryRecord()]);
 
       const response = await request(app.getHttpServer())
         .get('/api/v1/memories')
@@ -219,7 +219,7 @@ describe('MemoryController (HTTP)', () => {
     });
 
     it('should pass filter parameters to service', async () => {
-      memoryService.listMemories!.mockReturnValue([]);
+      memoryService.listMemories!.mockResolvedValue([]);
 
       await request(app.getHttpServer())
         .get('/api/v1/memories')
@@ -237,7 +237,7 @@ describe('MemoryController (HTTP)', () => {
     });
 
     it('should use default limit and offset', async () => {
-      memoryService.listMemories!.mockReturnValue([]);
+      memoryService.listMemories!.mockResolvedValue([]);
 
       await request(app.getHttpServer())
         .get('/api/v1/memories')
@@ -252,7 +252,7 @@ describe('MemoryController (HTTP)', () => {
   describe('GET /api/v1/memories/:id', () => {
     it('should return a memory by ID', async () => {
       const record = makeMemoryRecord({ id: 'specific-id' });
-      memoryService.getMemory!.mockReturnValue(record);
+      memoryService.getMemory!.mockResolvedValue(record);
 
       const response = await request(app.getHttpServer())
         .get('/api/v1/memories/specific-id')
@@ -263,10 +263,9 @@ describe('MemoryController (HTTP)', () => {
     });
 
     it('should return 404 when memory not found', async () => {
-      memoryService.getMemory!.mockImplementation(() => {
-        const { NotFoundException } = require('@nestjs/common');
-        throw new NotFoundException('Memory not-found not found');
-      });
+      memoryService.getMemory!.mockRejectedValue(
+        new (require('@nestjs/common').NotFoundException)('Memory not-found not found'),
+      );
 
       await request(app.getHttpServer())
         .get('/api/v1/memories/not-found')

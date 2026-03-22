@@ -37,17 +37,17 @@ export class ResourceController {
 
   @Get()
   @ApiOperation({ summary: 'List all resources' })
-  list(): ApiResponse<ResourceRecord[]> {
+  async list(): Promise<ApiResponse<ResourceRecord[]>> {
     const startTime = Date.now();
-    const resources = this.resourceService.listResources();
+    const resources = await this.resourceService.listResources();
     return okResponse(resources, startTime);
   }
 
   @Get(':id')
   @ApiOperation({ summary: 'Get a specific resource' })
-  get(@Param('id') id: string): ApiResponse<ResourceRecord> {
+  async get(@Param('id') id: string): Promise<ApiResponse<ResourceRecord>> {
     const startTime = Date.now();
-    const resource = this.resourceService.getResource(id);
+    const resource = await this.resourceService.getResource(id);
     return okResponse(resource, startTime);
   }
 

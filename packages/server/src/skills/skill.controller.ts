@@ -52,9 +52,9 @@ export class SkillController {
 
   @Get()
   @ApiOperation({ summary: 'List all skills' })
-  list(@Query() query: ListSkillsQueryDto): ApiResponse<SkillRecord[]> {
+  async list(@Query() query: ListSkillsQueryDto): Promise<ApiResponse<SkillRecord[]>> {
     const startTime = Date.now();
-    const skills = this.skillService.listSkills(
+    const skills = await this.skillService.listSkills(
       query.limit ?? 100,
       query.offset ?? 0,
       query.tag,
@@ -64,9 +64,9 @@ export class SkillController {
 
   @Get(':id')
   @ApiOperation({ summary: 'Get a specific skill' })
-  get(@Param('id') id: string): ApiResponse<SkillRecord> {
+  async get(@Param('id') id: string): Promise<ApiResponse<SkillRecord>> {
     const startTime = Date.now();
-    const skill = this.skillService.getSkill(id);
+    const skill = await this.skillService.getSkill(id);
     return okResponse(skill, startTime);
   }
 

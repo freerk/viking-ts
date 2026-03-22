@@ -2,9 +2,23 @@ import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 
+type StorageBackend = 'sqlite' | 'postgres';
+
+interface PostgresConfig {
+  host: string;
+  port: number;
+  username: string;
+  password: string;
+  database: string;
+}
+
 interface VikingConfig {
   server: { host: string; port: number };
-  storage: { path: string };
+  storage: {
+    path: string;
+    backend: StorageBackend;
+    postgres: PostgresConfig;
+  };
   embedding: {
     provider: string;
     model: string;
@@ -35,6 +49,14 @@ export function loadConfig(): VikingConfig {
     },
     storage: {
       path: '~/.viking-ts/data',
+      backend: 'sqlite' as StorageBackend,
+      postgres: {
+        host: 'localhost',
+        port: 5432,
+        username: 'postgres',
+        password: '',
+        database: 'viking_ts',
+      },
     },
     embedding: {
       provider: 'openai',
@@ -78,6 +100,30 @@ export function loadConfig(): VikingConfig {
           fileConfig.storage?.path ??
           defaults.storage.path,
       ),
+      backend: (process.env['STORAGE_BACKEND'] ??
+        fileConfig.storage?.backend ??
+        defaults.storage.backend) as StorageBackend,
+      postgres: {
+        host:
+          process.env['DB_HOST'] ??
+          fileConfig.storage?.postgres?.host ??
+          defaults.storage.postgres.host,
+        port:
+          parseInt(process.env['DB_PORT'] ?? '', 10) ||
+          (fileConfig.storage?.postgres?.port ?? defaults.storage.postgres.port),
+        username:
+          process.env['DB_USERNAME'] ??
+          fileConfig.storage?.postgres?.username ??
+          defaults.storage.postgres.username,
+        password:
+          process.env['DB_PASSWORD'] ??
+          fileConfig.storage?.postgres?.password ??
+          defaults.storage.postgres.password,
+        database:
+          process.env['DB_DATABASE'] ??
+          fileConfig.storage?.postgres?.database ??
+          defaults.storage.postgres.database,
+      },
     },
     embedding: {
       provider:

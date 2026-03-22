@@ -27,6 +27,7 @@ viking-ts/
 │   │   │   ├── embedding/   # OpenAI-compatible embedding service
 │   │   │   ├── llm/         # LLM service (L0/L1 generation, memory extraction)
 │   │   │   ├── storage/     # vectra vector DB + SQLite metadata
+│   │   │   ├── database/    # TypeORM entities, migrations, Postgres services
 │   │   │   └── health/      # Health check endpoint
 │   │   └── test/            # Jest tests
 │   └── openclaw-plugin/     # OpenClaw context-engine plugin
@@ -159,6 +160,51 @@ All configuration can be set via environment variables, `~/.viking-ts/config.jso
 | `LLM_API_KEY` | (none) | API key for LLM provider |
 | `LLM_API_BASE` | `https://api.openai.com/v1` | Base URL for LLM API |
 
+## PostgreSQL + pgvector (optional)
+
+By default viking-ts uses SQLite + vectra for zero-config local storage. For production workloads you can switch to PostgreSQL with pgvector for scalable vector search.
+
+### Requirements
+
+- PostgreSQL 14+ with the [pgvector](https://github.com/pgvector/pgvector) extension
+
+### Docker quickstart
+
+```bash
+docker run -e POSTGRES_PASSWORD=postgres -p 5432:5432 pgvector/pgvector:pg16
+```
+
+### Enable Postgres backend
+
+```bash
+export STORAGE_BACKEND=postgres
+export DB_HOST=localhost
+export DB_PORT=5432
+export DB_USERNAME=postgres
+export DB_PASSWORD=postgres
+export DB_DATABASE=viking_ts
+```
+
+### Run migrations
+
+```bash
+npm run migration:run --workspace=packages/server
+```
+
+### Environment variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `STORAGE_BACKEND` | `sqlite` | Set to `postgres` to use PostgreSQL |
+| `DB_HOST` | `localhost` | PostgreSQL host |
+| `DB_PORT` | `5432` | PostgreSQL port |
+| `DB_USERNAME` | `postgres` | PostgreSQL username |
+| `DB_PASSWORD` | — | PostgreSQL password |
+| `DB_DATABASE` | `viking_ts` | PostgreSQL database name |
+| `DB_LOGGING` | `false` | Enable TypeORM query logging |
+
+See [docs/postgres-setup.md](docs/postgres-setup.md) for the full setup guide including user creation and pgvector installation.
+
 ### Config file
 
 Optional config file at `~/.viking-ts/config.json`:
@@ -209,7 +255,7 @@ Optional config file at `~/.viking-ts/config.json`:
 
 All responses follow the shape `{ status: "ok", result: T, time: number }` or `{ status: "error", error: { code, message } }`.
 
-Interactive Swagger docs available at `http://localhost:1934/docs` when the server is running.
+Interactive Swagger docs available at `http://localhost:1934/openapi` when the server is running (set `SWAGGER_ENABLED=true`).
 
 See [docs/api-reference.md](docs/api-reference.md) for full request/response examples.
 
@@ -330,8 +376,8 @@ npm run lint
 | Component | Technology |
 |-----------|-----------|
 | API framework | NestJS 10 |
-| Vector storage | vectra (pure TypeScript) |
-| Metadata storage | better-sqlite3 |
+| Vector storage | vectra (pure TypeScript) / pgvector |
+| Metadata storage | better-sqlite3 / PostgreSQL + TypeORM |
 | Embedding + LLM | OpenAI SDK (works with any compatible endpoint) |
 | Validation | class-validator (server), Zod (plugin) |
 | API docs | @nestjs/swagger |

@@ -45,7 +45,19 @@ LLM_PROVIDER=openai
 LLM_MODEL=gpt-4o-mini
 LLM_API_KEY=sk-...
 LLM_API_BASE=https://api.openai.com/v1
+SWAGGER_ENABLED=true
+SWAGGER_USER=admin
+SWAGGER_PASSWORD=changeme
 ```
+
+## Swagger / OpenAPI
+
+- `GET /openapi` - Swagger UI (when enabled)
+- `GET /openapi-json` - Raw OpenAPI JSON spec (when enabled)
+
+Controlled by `SWAGGER_ENABLED` env var (default: `false`).
+In production (`NODE_ENV=production`), requires `SWAGGER_USER` and `SWAGGER_PASSWORD` for HTTP basic auth.
+In development, accessible without auth.
 
 ## Key API endpoints
 
