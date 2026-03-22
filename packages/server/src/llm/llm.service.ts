@@ -1,40 +1,40 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import OpenAI from 'openai';
+import { generateText, LanguageModel } from 'ai';
+import { getLanguageModel, LlmProvider } from './providers';
 
 @Injectable()
 export class LlmService implements OnModuleInit {
   private readonly logger = new Logger(LlmService.name);
-  private client!: OpenAI;
-  private model!: string;
+  private languageModel!: LanguageModel;
 
   constructor(private readonly config: ConfigService) {}
 
   onModuleInit(): void {
+    const provider = this.config.get<LlmProvider>('llm.provider', 'openai');
+    const model = this.config.get<string>('llm.model', 'gpt-4o-mini');
     const apiKey = this.config.get<string>('llm.apiKey', '');
-    const apiBase = this.config.get<string>('llm.apiBase', 'https://api.openai.com/v1');
-    this.model = this.config.get<string>('llm.model', 'gpt-4o-mini');
+    const apiBase = this.config.get<string>('llm.apiBase', '');
 
-    this.client = new OpenAI({
-      apiKey: apiKey || 'dummy-key',
-      baseURL: apiBase,
-    });
+    this.languageModel = getLanguageModel(
+      provider,
+      model,
+      apiKey || 'dummy-key',
+      apiBase || undefined,
+    );
 
-    this.logger.log(`LLM service initialized: model=${this.model}`);
+    this.logger.log(`LLM service initialized: provider=${provider} model=${model}`);
   }
 
   async complete(systemPrompt: string, userContent: string, maxTokens: number = 1024): Promise<string> {
-    const response = await this.client.chat.completions.create({
-      model: this.model,
-      max_tokens: maxTokens,
+    const { text } = await generateText({
+      model: this.languageModel,
+      maxOutputTokens: maxTokens,
       temperature: 0,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userContent },
-      ],
+      system: systemPrompt,
+      prompt: userContent,
     });
 
-    const text = response.choices[0]?.message?.content;
     if (!text) {
       throw new Error('No completion returned from LLM provider');
     }
