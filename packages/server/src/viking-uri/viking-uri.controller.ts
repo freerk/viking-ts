@@ -16,7 +16,7 @@ export class VikingUriController {
   @Get('ls')
   @ApiOperation({ summary: 'List contents at a Viking URI' })
   @ApiQuery({ name: 'uri', required: true })
-  ls(@Query('uri') uri: string): ApiResponse<{ uri: string; children: string[] }> {
+  async ls(@Query('uri') uri: string): Promise<ApiResponse<{ uri: string; children: string[] }>> {
     const startTime = Date.now();
 
     if (!uri) {
@@ -30,10 +30,10 @@ export class VikingUriController {
 
     if (parsed.scope === 'resources' || parsed.scope === 'user' || parsed.scope === 'agent') {
       if (parsed.scope === 'resources') {
-        const resources = this.metadataStore.listResources(1000);
+        const resources = await this.metadataStore.listResources(1000);
         allUris.push(...resources.map((r) => r.uri));
       } else {
-        const memories = this.metadataStore.listMemories({
+        const memories = await this.metadataStore.listMemories({
           type: parsed.scope === 'user' ? 'user' : 'agent',
           limit: 1000,
         });
@@ -50,10 +50,10 @@ export class VikingUriController {
   @ApiOperation({ summary: 'Tree view of a Viking URI' })
   @ApiQuery({ name: 'uri', required: true })
   @ApiQuery({ name: 'depth', required: false })
-  tree(
+  async tree(
     @Query('uri') uri: string,
     @Query('depth') depthStr?: string,
-  ): ApiResponse<VikingNode> {
+  ): Promise<ApiResponse<VikingNode>> {
     const startTime = Date.now();
 
     if (!uri) {
@@ -67,10 +67,10 @@ export class VikingUriController {
     const allUris: string[] = [];
 
     if (parsed.scope === 'resources') {
-      const resources = this.metadataStore.listResources(1000);
+      const resources = await this.metadataStore.listResources(1000);
       allUris.push(...resources.map((r) => r.uri));
     } else {
-      const memories = this.metadataStore.listMemories({
+      const memories = await this.metadataStore.listMemories({
         type: parsed.scope === 'user' ? 'user' : 'agent',
         limit: 1000,
       });

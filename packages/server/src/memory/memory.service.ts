@@ -71,7 +71,7 @@ export class MemoryService {
       updatedAt: now,
     };
 
-    this.metadataStore.insertMemory(memory);
+    await this.metadataStore.insertMemory(memory);
 
     try {
       const vector = await this.embeddingService.embed(l0Abstract || params.text);
@@ -118,27 +118,27 @@ export class MemoryService {
     }));
   }
 
-  getMemory(id: string): MemoryRecord {
-    const memory = this.metadataStore.getMemoryById(id);
+  async getMemory(id: string): Promise<MemoryRecord> {
+    const memory = await this.metadataStore.getMemoryById(id);
     if (!memory) {
       throw new NotFoundException(`Memory ${id} not found`);
     }
     return memory;
   }
 
-  listMemories(filters: {
+  async listMemories(filters: {
     agentId?: string;
     userId?: string;
     type?: MemoryType;
     category?: MemoryCategory;
     limit?: number;
     offset?: number;
-  }): MemoryRecord[] {
+  }): Promise<MemoryRecord[]> {
     return this.metadataStore.listMemories(filters);
   }
 
   async deleteMemory(id: string): Promise<void> {
-    const deleted = this.metadataStore.deleteMemory(id);
+    const deleted = await this.metadataStore.deleteMemory(id);
     if (!deleted) {
       throw new NotFoundException(`Memory ${id} not found`);
     }
@@ -154,7 +154,7 @@ export class MemoryService {
     const sessionId = uuid();
     const now = new Date().toISOString();
 
-    this.metadataStore.insertSession({
+    await this.metadataStore.insertSession({
       id: sessionId,
       agentId,
       userId,
@@ -170,7 +170,7 @@ export class MemoryService {
         content: msg.content,
         createdAt: now,
       };
-      this.metadataStore.insertSessionMessage(msgRecord);
+      await this.metadataStore.insertSessionMessage(msgRecord);
     }
 
     let extracted: Array<{ text: string; category: string }> = [];

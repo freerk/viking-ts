@@ -11,8 +11,8 @@ describe('VikingUriController (HTTP)', () => {
 
   beforeEach(async () => {
     metadataStore = {
-      listResources: jest.fn().mockReturnValue([]),
-      listMemories: jest.fn().mockReturnValue([]),
+      listResources: jest.fn().mockResolvedValue([]),
+      listMemories: jest.fn().mockResolvedValue([]),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -40,7 +40,7 @@ describe('VikingUriController (HTTP)', () => {
 
   describe('GET /api/v1/ls', () => {
     it('should list children at a resource URI', async () => {
-      metadataStore.listResources!.mockReturnValue([
+      metadataStore.listResources!.mockResolvedValue([
         { uri: 'viking://resources/doc1.md' },
         { uri: 'viking://resources/doc2.md' },
         { uri: 'viking://resources/other/nested.md' },
@@ -63,7 +63,7 @@ describe('VikingUriController (HTTP)', () => {
     });
 
     it('should list children at a user memories URI', async () => {
-      metadataStore.listMemories!.mockReturnValue([
+      metadataStore.listMemories!.mockResolvedValue([
         { uri: 'viking://user/memories/preferences/a.md' },
         { uri: 'viking://user/memories/general/b.md' },
       ]);
@@ -93,7 +93,7 @@ describe('VikingUriController (HTTP)', () => {
     });
 
     it('should return empty children when no matches', async () => {
-      metadataStore.listResources!.mockReturnValue([]);
+      metadataStore.listResources!.mockResolvedValue([]);
 
       const response = await request(app.getHttpServer())
         .get('/api/v1/ls')
@@ -106,7 +106,7 @@ describe('VikingUriController (HTTP)', () => {
 
   describe('GET /api/v1/tree', () => {
     it('should return tree view of resources', async () => {
-      metadataStore.listResources!.mockReturnValue([
+      metadataStore.listResources!.mockResolvedValue([
         { uri: 'viking://resources/doc1.md' },
         { uri: 'viking://resources/doc2.md' },
       ]);
@@ -123,7 +123,7 @@ describe('VikingUriController (HTTP)', () => {
     });
 
     it('should accept custom depth parameter', async () => {
-      metadataStore.listResources!.mockReturnValue([]);
+      metadataStore.listResources!.mockResolvedValue([]);
 
       await request(app.getHttpServer())
         .get('/api/v1/tree')
@@ -132,7 +132,7 @@ describe('VikingUriController (HTTP)', () => {
     });
 
     it('should default to depth 2 when not specified', async () => {
-      metadataStore.listResources!.mockReturnValue([
+      metadataStore.listResources!.mockResolvedValue([
         { uri: 'viking://resources/a/b/c.md' },
       ]);
 
@@ -151,7 +151,7 @@ describe('VikingUriController (HTTP)', () => {
     });
 
     it('should use listMemories for user scope', async () => {
-      metadataStore.listMemories!.mockReturnValue([
+      metadataStore.listMemories!.mockResolvedValue([
         { uri: 'viking://user/memories/general/m1.md' },
       ]);
 
@@ -166,7 +166,7 @@ describe('VikingUriController (HTTP)', () => {
     });
 
     it('should include time field in response', async () => {
-      metadataStore.listResources!.mockReturnValue([]);
+      metadataStore.listResources!.mockResolvedValue([]);
 
       const response = await request(app.getHttpServer())
         .get('/api/v1/tree')
@@ -178,7 +178,7 @@ describe('VikingUriController (HTTP)', () => {
     });
 
     it('should use listMemories for agent scope', async () => {
-      metadataStore.listMemories!.mockReturnValue([]);
+      metadataStore.listMemories!.mockResolvedValue([]);
 
       await request(app.getHttpServer())
         .get('/api/v1/tree')
@@ -193,7 +193,7 @@ describe('VikingUriController (HTTP)', () => {
 
   describe('GET /api/v1/ls edge cases', () => {
     it('should exclude the queried URI itself from children', async () => {
-      metadataStore.listResources!.mockReturnValue([
+      metadataStore.listResources!.mockResolvedValue([
         { uri: 'viking://resources/' },
         { uri: 'viking://resources/doc.md' },
       ]);
@@ -207,7 +207,7 @@ describe('VikingUriController (HTTP)', () => {
     });
 
     it('should include time field in ls response', async () => {
-      metadataStore.listResources!.mockReturnValue([]);
+      metadataStore.listResources!.mockResolvedValue([]);
 
       const response = await request(app.getHttpServer())
         .get('/api/v1/ls')
@@ -218,7 +218,7 @@ describe('VikingUriController (HTTP)', () => {
     });
 
     it('should use listMemories for agent scope in ls', async () => {
-      metadataStore.listMemories!.mockReturnValue([]);
+      metadataStore.listMemories!.mockResolvedValue([]);
 
       await request(app.getHttpServer())
         .get('/api/v1/ls')

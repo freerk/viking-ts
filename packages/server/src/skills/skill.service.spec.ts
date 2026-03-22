@@ -109,24 +109,24 @@ describe('SkillService', () => {
       content: 'Content for get test',
     });
 
-    const fetched = service.getSkill(created.id);
+    const fetched = await service.getSkill(created.id);
     expect(fetched.id).toBe(created.id);
     expect(fetched.name).toBe('get-test');
   });
 
-  it('should throw NotFoundException for missing skill', () => {
-    expect(() => service.getSkill('nonexistent-id')).toThrow(NotFoundException);
+  it('should throw NotFoundException for missing skill', async () => {
+    await expect(service.getSkill('nonexistent-id')).rejects.toThrow(NotFoundException);
   });
 
   it('should list skills', async () => {
-    const skills = service.listSkills(100, 0);
+    const skills = await service.listSkills(100, 0);
     expect(skills.length).toBeGreaterThanOrEqual(2);
   });
 
   it('should list skills filtered by tag', async () => {
-    const skills = service.listSkills(100, 0, 'react');
+    const skills = await service.listSkills(100, 0, 'react');
     expect(skills.length).toBeGreaterThanOrEqual(1);
-    expect(skills.every((s) => s.tags.includes('react'))).toBe(true);
+    expect(skills.every((s: { tags: string[] }) => s.tags.includes('react'))).toBe(true);
   });
 
   it('should search skills by vector similarity', async () => {
@@ -145,7 +145,7 @@ describe('SkillService', () => {
     });
 
     await service.deleteSkill(created.id);
-    expect(() => service.getSkill(created.id)).toThrow(NotFoundException);
+    await expect(service.getSkill(created.id)).rejects.toThrow(NotFoundException);
   });
 
   it('should throw NotFoundException when deleting missing skill', async () => {

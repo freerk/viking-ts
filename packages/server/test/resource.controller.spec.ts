@@ -186,7 +186,7 @@ describe('ResourceController (HTTP)', () => {
 
   describe('GET /api/v1/resources', () => {
     it('should list all resources', async () => {
-      resourceService.listResources!.mockReturnValue([makeResourceRecord()]);
+      resourceService.listResources!.mockResolvedValue([makeResourceRecord()]);
 
       const response = await request(app.getHttpServer())
         .get('/api/v1/resources')
@@ -197,7 +197,7 @@ describe('ResourceController (HTTP)', () => {
     });
 
     it('should return empty array when no resources', async () => {
-      resourceService.listResources!.mockReturnValue([]);
+      resourceService.listResources!.mockResolvedValue([]);
 
       const response = await request(app.getHttpServer())
         .get('/api/v1/resources')
@@ -210,7 +210,7 @@ describe('ResourceController (HTTP)', () => {
   describe('GET /api/v1/resources/:id', () => {
     it('should return a resource by ID', async () => {
       const record = makeResourceRecord({ id: 'res-456' });
-      resourceService.getResource!.mockReturnValue(record);
+      resourceService.getResource!.mockResolvedValue(record);
 
       const response = await request(app.getHttpServer())
         .get('/api/v1/resources/res-456')
@@ -220,9 +220,9 @@ describe('ResourceController (HTTP)', () => {
     });
 
     it('should return 404 when resource not found', async () => {
-      resourceService.getResource!.mockImplementation(() => {
-        throw new NotFoundException('Resource not found');
-      });
+      resourceService.getResource!.mockRejectedValue(
+        new NotFoundException('Resource not found'),
+      );
 
       await request(app.getHttpServer())
         .get('/api/v1/resources/missing')

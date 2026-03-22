@@ -123,7 +123,7 @@ describe('SkillController', () => {
 
   describe('GET /api/v1/skills', () => {
     it('should list skills', async () => {
-      mockService.listSkills.mockReturnValue([makeSkillRecord()]);
+      mockService.listSkills.mockResolvedValue([makeSkillRecord()]);
 
       const res = await request(app.getHttpServer())
         .get('/api/v1/skills')
@@ -134,7 +134,7 @@ describe('SkillController', () => {
     });
 
     it('should pass tag filter', async () => {
-      mockService.listSkills.mockReturnValue([]);
+      mockService.listSkills.mockResolvedValue([]);
 
       await request(app.getHttpServer())
         .get('/api/v1/skills?tag=react')
@@ -146,7 +146,7 @@ describe('SkillController', () => {
 
   describe('GET /api/v1/skills/:id', () => {
     it('should get a skill by id', async () => {
-      mockService.getSkill.mockReturnValue(makeSkillRecord());
+      mockService.getSkill.mockResolvedValue(makeSkillRecord());
 
       const res = await request(app.getHttpServer())
         .get('/api/v1/skills/skill-123')

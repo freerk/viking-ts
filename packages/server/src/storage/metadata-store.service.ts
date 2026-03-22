@@ -115,7 +115,7 @@ export class MetadataStoreService implements OnModuleInit, OnModuleDestroy {
 
   /* ── Memories ── */
 
-  insertMemory(memory: MemoryRecord): void {
+  async insertMemory(memory: MemoryRecord): Promise<void> {
     this.db
       .prepare(
         `INSERT INTO memories (id, text, type, category, agent_id, user_id, uri, l0_abstract, l1_overview, l2_content, created_at, updated_at)
@@ -137,21 +137,21 @@ export class MetadataStoreService implements OnModuleInit, OnModuleDestroy {
       );
   }
 
-  getMemoryById(id: string): MemoryRecord | undefined {
+  async getMemoryById(id: string): Promise<MemoryRecord | undefined> {
     const row = this.db
       .prepare('SELECT * FROM memories WHERE id = ?')
       .get(id) as Record<string, unknown> | undefined;
     return row ? this.rowToMemory(row) : undefined;
   }
 
-  listMemories(filters: {
+  async listMemories(filters: {
     agentId?: string;
     userId?: string;
     type?: MemoryType;
     category?: MemoryCategory;
     limit?: number;
     offset?: number;
-  }): MemoryRecord[] {
+  }): Promise<MemoryRecord[]> {
     const conditions: string[] = [];
     const params: unknown[] = [];
 
@@ -183,15 +183,15 @@ export class MetadataStoreService implements OnModuleInit, OnModuleDestroy {
     return rows.map((row) => this.rowToMemory(row));
   }
 
-  deleteMemory(id: string): boolean {
+  async deleteMemory(id: string): Promise<boolean> {
     const result = this.db.prepare('DELETE FROM memories WHERE id = ?').run(id);
     return result.changes > 0;
   }
 
-  updateMemory(
+  async updateMemory(
     id: string,
     updates: Partial<Pick<MemoryRecord, 'text' | 'l0Abstract' | 'l1Overview' | 'l2Content'>>,
-  ): boolean {
+  ): Promise<boolean> {
     const sets: string[] = [];
     const params: unknown[] = [];
 
@@ -226,7 +226,7 @@ export class MetadataStoreService implements OnModuleInit, OnModuleDestroy {
 
   /* ── Resources ── */
 
-  insertResource(resource: ResourceRecord): void {
+  async insertResource(resource: ResourceRecord): Promise<void> {
     this.db
       .prepare(
         `INSERT INTO resources (id, title, uri, source_url, l0_abstract, l1_overview, l2_content, created_at, updated_at)
@@ -245,28 +245,28 @@ export class MetadataStoreService implements OnModuleInit, OnModuleDestroy {
       );
   }
 
-  getResourceById(id: string): ResourceRecord | undefined {
+  async getResourceById(id: string): Promise<ResourceRecord | undefined> {
     const row = this.db
       .prepare('SELECT * FROM resources WHERE id = ?')
       .get(id) as Record<string, unknown> | undefined;
     return row ? this.rowToResource(row) : undefined;
   }
 
-  listResources(limit: number = 100, offset: number = 0): ResourceRecord[] {
+  async listResources(limit: number = 100, offset: number = 0): Promise<ResourceRecord[]> {
     const rows = this.db
       .prepare('SELECT * FROM resources ORDER BY created_at DESC LIMIT ? OFFSET ?')
       .all(limit, offset) as Record<string, unknown>[];
     return rows.map((row) => this.rowToResource(row));
   }
 
-  deleteResource(id: string): boolean {
+  async deleteResource(id: string): Promise<boolean> {
     const result = this.db.prepare('DELETE FROM resources WHERE id = ?').run(id);
     return result.changes > 0;
   }
 
   /* ── Skills ── */
 
-  insertSkill(skill: SkillRecord): void {
+  async insertSkill(skill: SkillRecord): Promise<void> {
     this.db
       .prepare(
         `INSERT INTO skills (id, name, description, uri, tags, l0_abstract, l1_overview, l2_content, created_at, updated_at)
@@ -286,14 +286,14 @@ export class MetadataStoreService implements OnModuleInit, OnModuleDestroy {
       );
   }
 
-  getSkillById(id: string): SkillRecord | undefined {
+  async getSkillById(id: string): Promise<SkillRecord | undefined> {
     const row = this.db
       .prepare('SELECT * FROM skills WHERE id = ?')
       .get(id) as Record<string, unknown> | undefined;
     return row ? this.rowToSkill(row) : undefined;
   }
 
-  listSkills(limit: number = 100, offset: number = 0, tag?: string): SkillRecord[] {
+  async listSkills(limit: number = 100, offset: number = 0, tag?: string): Promise<SkillRecord[]> {
     if (tag) {
       const rows = this.db
         .prepare(
@@ -309,14 +309,14 @@ export class MetadataStoreService implements OnModuleInit, OnModuleDestroy {
     return rows.map((row) => this.rowToSkill(row));
   }
 
-  deleteSkill(id: string): boolean {
+  async deleteSkill(id: string): Promise<boolean> {
     const result = this.db.prepare('DELETE FROM skills WHERE id = ?').run(id);
     return result.changes > 0;
   }
 
   /* ── Sessions ── */
 
-  insertSession(session: SessionRecord): void {
+  async insertSession(session: SessionRecord): Promise<void> {
     this.db
       .prepare(
         `INSERT INTO sessions (id, agent_id, user_id, created_at, updated_at)
@@ -325,19 +325,19 @@ export class MetadataStoreService implements OnModuleInit, OnModuleDestroy {
       .run(session.id, session.agentId ?? null, session.userId ?? null, session.createdAt, session.updatedAt);
   }
 
-  getSessionById(id: string): SessionRecord | undefined {
+  async getSessionById(id: string): Promise<SessionRecord | undefined> {
     const row = this.db
       .prepare('SELECT * FROM sessions WHERE id = ?')
       .get(id) as Record<string, unknown> | undefined;
     return row ? this.rowToSession(row) : undefined;
   }
 
-  deleteSession(id: string): boolean {
+  async deleteSession(id: string): Promise<boolean> {
     const result = this.db.prepare('DELETE FROM sessions WHERE id = ?').run(id);
     return result.changes > 0;
   }
 
-  insertSessionMessage(message: SessionMessage): void {
+  async insertSessionMessage(message: SessionMessage): Promise<void> {
     this.db
       .prepare(
         `INSERT INTO session_messages (id, session_id, role, content, created_at)
@@ -346,7 +346,7 @@ export class MetadataStoreService implements OnModuleInit, OnModuleDestroy {
       .run(message.id, message.sessionId, message.role, message.content, message.createdAt);
   }
 
-  getSessionMessages(sessionId: string): SessionMessage[] {
+  async getSessionMessages(sessionId: string): Promise<SessionMessage[]> {
     const rows = this.db
       .prepare('SELECT * FROM session_messages WHERE session_id = ? ORDER BY created_at ASC')
       .all(sessionId) as Record<string, unknown>[];
