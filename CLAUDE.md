@@ -66,8 +66,17 @@ In development, accessible without auth.
 - `GET /api/v1/memories/search?q=...` - Semantic search
 - `GET /api/v1/memories` - List memories
 - `DELETE /api/v1/memories/:id` - Delete memory
-- `POST /api/v1/sessions/capture` - Ingest conversation, extract memories
-- `POST /api/v1/resources` - Add resource
+- `POST /api/v1/sessions` - Create session
+- `GET /api/v1/sessions` - List sessions
+- `GET /api/v1/sessions/:id` - Get session
+- `DELETE /api/v1/sessions/:id` - Delete session
+- `POST /api/v1/sessions/:id/commit` - Commit session (extract memories, returns task_id)
+- `POST /api/v1/sessions/:id/extract` - Extract memories from session
+- `POST /api/v1/sessions/:id/messages` - Add message (content or parts)
+- `POST /api/v1/sessions/:id/used` - Record used contexts/skills
+- `POST /api/v1/resources/temp_upload` - Upload temp file (multipart)
+- `POST /api/v1/resources` - Add resource (OpenViking-compatible: path/temp_path, to/parent)
+- `POST /api/v1/skills` - Add skill (data or temp_path)
 - `GET /api/v1/resources/search?q=...` - Search resources
 - `GET /api/v1/ls?uri=viking://...` - List Viking URI contents
 - `GET /api/v1/tree?uri=viking://...` - Tree view

@@ -15,6 +15,7 @@ import { QueueModule } from './queue/queue.module';
 import { SearchModule } from './search/search.module';
 import { TasksModule } from './tasks/tasks.module';
 import { SystemModule } from './system/system.module';
+import { SessionModule } from './session/session.module';
 import { loadConfig } from './config';
 
 @Module({
@@ -38,6 +39,7 @@ import { loadConfig } from './config';
     SearchModule,
     TasksModule,
     SystemModule,
+    SessionModule,
   ],
 })
 export class AppModule {}

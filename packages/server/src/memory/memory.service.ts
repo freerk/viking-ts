@@ -239,10 +239,10 @@ export class MemoryService {
 
     this.database.db
       .prepare(
-        `INSERT INTO sessions (id, account_id, agent_id, user_id, status, created_at, updated_at)
-         VALUES (?, 'default', ?, ?, 'active', ?, ?)`,
+        `INSERT INTO sessions (session_id, account_id, user_id, agent_id, status, message_count, contexts_used, skills_used, created_at, updated_at)
+         VALUES (?, 'default', ?, ?, 'active', 0, 0, 0, ?, ?)`,
       )
-      .run(sessionId, agentId ?? null, userId ?? null, now, now);
+      .run(sessionId, userId ?? 'default', agentId ?? 'default', now, now);
 
     for (const msg of messages) {
       this.database.db

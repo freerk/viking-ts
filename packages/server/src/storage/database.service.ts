@@ -83,21 +83,23 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
       CREATE INDEX IF NOT EXISTS idx_rel_from ON relations(from_uri);
 
       CREATE TABLE IF NOT EXISTS sessions (
-        id TEXT PRIMARY KEY,
-        account_id TEXT DEFAULT 'default',
-        agent_id TEXT,
-        user_id TEXT,
-        status TEXT DEFAULT 'active',
+        session_id TEXT PRIMARY KEY,
+        account_id TEXT NOT NULL DEFAULT 'default',
+        user_id TEXT NOT NULL DEFAULT 'default',
+        agent_id TEXT NOT NULL DEFAULT 'default',
+        status TEXT NOT NULL DEFAULT 'active',
+        message_count INTEGER NOT NULL DEFAULT 0,
+        contexts_used INTEGER NOT NULL DEFAULT 0,
+        skills_used INTEGER NOT NULL DEFAULT 0,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
 
       CREATE TABLE IF NOT EXISTS session_messages (
         id TEXT PRIMARY KEY,
-        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
         role TEXT NOT NULL,
         content TEXT NOT NULL,
-        parts_json TEXT,
         created_at TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_sm_session ON session_messages(session_id);
