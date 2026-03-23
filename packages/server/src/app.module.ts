@@ -13,6 +13,8 @@ import { ContentModule } from './content/content.module';
 import { RelationsModule } from './relations/relations.module';
 import { QueueModule } from './queue/queue.module';
 import { SearchModule } from './search/search.module';
+import { TasksModule } from './tasks/tasks.module';
+import { SystemModule } from './system/system.module';
 import { loadConfig } from './config';
 
 @Module({
@@ -34,6 +36,8 @@ import { loadConfig } from './config';
     ContentModule,
     RelationsModule,
     SearchModule,
+    TasksModule,
+    SystemModule,
   ],
 })
 export class AppModule {}
