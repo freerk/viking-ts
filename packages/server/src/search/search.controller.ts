@@ -34,7 +34,7 @@ export class SearchController {
       const contexts = await this.searchService.find({
         query: dto.query,
         targetDirectories: dto.target_uri ? [dto.target_uri] : undefined,
-        limit: dto.limit ?? 5,
+        limit: dto.node_limit ?? dto.limit ?? 10,
         scoreThreshold: dto.score_threshold,
       });
       return okResponse({ contexts }, startTime);
@@ -53,7 +53,7 @@ export class SearchController {
       const contexts = await this.searchService.find({
         query: dto.query,
         targetDirectories: dto.target_uri ? [dto.target_uri] : undefined,
-        limit: dto.limit ?? 5,
+        limit: dto.node_limit ?? dto.limit ?? 10,
         scoreThreshold: dto.score_threshold,
       });
       return okResponse({ contexts }, startTime);

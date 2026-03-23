@@ -44,6 +44,14 @@ export class FindRequestDto {
   @IsObject()
   filter?: Record<string, unknown>;
 
+  @ApiPropertyOptional({ description: 'Alias for limit (takes precedence)' })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(1)
+  @Max(100)
+  node_limit?: number;
+
   @ApiPropertyOptional({ description: 'Include telemetry data in response' })
   @IsOptional()
   @IsBoolean()
@@ -83,6 +91,14 @@ export class SearchRequestDto {
   @Min(0)
   @Max(1)
   score_threshold?: number;
+
+  @ApiPropertyOptional({ description: 'Alias for limit (takes precedence)' })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(1)
+  @Max(100)
+  node_limit?: number;
 
   @ApiPropertyOptional({ description: 'Additional filter constraints' })
   @IsOptional()
