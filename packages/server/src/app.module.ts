@@ -12,6 +12,7 @@ import { FsModule } from './fs/fs.module';
 import { ContentModule } from './content/content.module';
 import { RelationsModule } from './relations/relations.module';
 import { QueueModule } from './queue/queue.module';
+import { SearchModule } from './search/search.module';
 import { loadConfig } from './config';
 
 @Module({
@@ -32,6 +33,7 @@ import { loadConfig } from './config';
     FsModule,
     ContentModule,
     RelationsModule,
+    SearchModule,
   ],
 })
 export class AppModule {}

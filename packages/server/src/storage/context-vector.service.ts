@@ -276,6 +276,113 @@ export class ContextVectorService {
     return scored.slice(0, limit);
   }
 
+  /**
+   * Search children of a specific parent URI by vector similarity.
+   * Used by hierarchical retriever for directory traversal.
+   */
+  async searchByParentUri(
+    parentUri: string,
+    queryVector: number[],
+    opts: {
+      limit?: number;
+      contextType?: string;
+      accountId?: string;
+    } = {},
+  ): Promise<Array<ContextRecord & { score: number }>> {
+    const conditions: string[] = ['embedding_json IS NOT NULL', 'parent_uri = ?'];
+    const params: unknown[] = [parentUri];
+
+    if (opts.contextType) {
+      conditions.push('context_type = ?');
+      params.push(opts.contextType);
+    }
+    if (opts.accountId) {
+      conditions.push('account_id = ?');
+      params.push(opts.accountId);
+    }
+
+    const rows = this.database.db
+      .prepare(`SELECT * FROM context_vectors WHERE ${conditions.join(' AND ')}`)
+      .all(...params) as ContextVectorRow[];
+
+    const limit = opts.limit ?? 20;
+    const scored: Array<ContextRecord & { score: number }> = [];
+
+    for (const row of rows) {
+      if (!row.embedding_json) continue;
+
+      let embedding: number[];
+      try {
+        embedding = JSON.parse(row.embedding_json) as number[];
+      } catch {
+        continue;
+      }
+
+      const score = cosineSimilarity(queryVector, embedding);
+      scored.push({ ...this.rowToRecord(row), score });
+    }
+
+    scored.sort((a, b) => b.score - a.score);
+    return scored.slice(0, limit);
+  }
+
+  /**
+   * Global vector search across the entire collection.
+   * Used by hierarchical retriever for initial directory discovery.
+   */
+  async searchGlobal(
+    queryVector: number[],
+    opts: {
+      limit?: number;
+      contextType?: string;
+      accountId?: string;
+      targetDirectories?: string[];
+    } = {},
+  ): Promise<Array<ContextRecord & { score: number }>> {
+    const conditions: string[] = ['embedding_json IS NOT NULL'];
+    const params: unknown[] = [];
+
+    if (opts.contextType) {
+      conditions.push('context_type = ?');
+      params.push(opts.contextType);
+    }
+    if (opts.accountId) {
+      conditions.push('account_id = ?');
+      params.push(opts.accountId);
+    }
+    if (opts.targetDirectories && opts.targetDirectories.length > 0) {
+      const uriConditions = opts.targetDirectories.map(() => 'uri LIKE ?');
+      conditions.push(`(${uriConditions.join(' OR ')})`);
+      for (const dir of opts.targetDirectories) {
+        params.push(`${dir}%`);
+      }
+    }
+
+    const rows = this.database.db
+      .prepare(`SELECT * FROM context_vectors WHERE ${conditions.join(' AND ')}`)
+      .all(...params) as ContextVectorRow[];
+
+    const limit = opts.limit ?? 5;
+    const scored: Array<ContextRecord & { score: number }> = [];
+
+    for (const row of rows) {
+      if (!row.embedding_json) continue;
+
+      let embedding: number[];
+      try {
+        embedding = JSON.parse(row.embedding_json) as number[];
+      } catch {
+        continue;
+      }
+
+      const score = cosineSimilarity(queryVector, embedding);
+      scored.push({ ...this.rowToRecord(row), score });
+    }
+
+    scored.sort((a, b) => b.score - a.score);
+    return scored.slice(0, limit);
+  }
+
   async incrementActiveCount(uri: string): Promise<void> {
     this.database.db
       .prepare('UPDATE context_vectors SET active_count = active_count + 1, updated_at = ? WHERE uri = ?')
