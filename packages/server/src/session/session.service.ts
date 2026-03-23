@@ -3,6 +3,8 @@ import { randomUUID } from 'crypto';
 import { DatabaseService } from '../storage/database.service';
 import { VfsService } from '../storage/vfs.service';
 import { TaskTrackerService } from '../tasks/task-tracker.service';
+import { LlmService } from '../llm/llm.service';
+import { SemanticQueueService } from '../queue/semantic-queue.service';
 import { SessionExtractorService, CandidateMemory } from './session-extractor.service';
 import { SessionMemoryWriterService } from './session-memory-writer.service';
 import { NotFoundError, ConflictError } from '../shared/errors';
@@ -16,6 +18,7 @@ export interface SessionRecord {
   message_count: number;
   contexts_used: number;
   skills_used: number;
+  compression_index: number;
   created_at: string;
   updated_at: string;
 }
@@ -37,6 +40,7 @@ interface SessionRow {
   message_count: number;
   contexts_used: number;
   skills_used: number;
+  compression_index: number;
   created_at: string;
   updated_at: string;
 }
@@ -74,6 +78,8 @@ export class SessionService {
     private readonly taskTracker: TaskTrackerService,
     private readonly extractor: SessionExtractorService,
     private readonly memoryWriter: SessionMemoryWriterService,
+    private readonly llm: LlmService,
+    private readonly semanticQueue: SemanticQueueService,
   ) {}
 
   private rowToRecord(row: SessionRow): SessionRecord {
@@ -86,6 +92,7 @@ export class SessionService {
       message_count: row.message_count,
       contexts_used: row.contexts_used,
       skills_used: row.skills_used,
+      compression_index: row.compression_index,
       created_at: row.created_at,
       updated_at: row.updated_at,
     };
@@ -115,6 +122,7 @@ export class SessionService {
       message_count: 0,
       contexts_used: 0,
       skills_used: 0,
+      compression_index: 0,
       created_at: now,
       updated_at: now,
     };
@@ -122,7 +130,7 @@ export class SessionService {
 
   async get(sessionId: string): Promise<SessionRecord> {
     const row = this.database.db
-      .prepare('SELECT session_id, account_id, user_id, agent_id, status, message_count, contexts_used, skills_used, created_at, updated_at FROM sessions WHERE session_id = ?')
+      .prepare('SELECT session_id, account_id, user_id, agent_id, status, message_count, contexts_used, skills_used, compression_index, created_at, updated_at FROM sessions WHERE session_id = ?')
       .get(sessionId) as SessionRow | undefined;
 
     if (!row) {
@@ -134,7 +142,7 @@ export class SessionService {
 
   async list(): Promise<SessionRecord[]> {
     const rows = this.database.db
-      .prepare('SELECT session_id, account_id, user_id, agent_id, status, message_count, contexts_used, skills_used, created_at, updated_at FROM sessions ORDER BY created_at DESC')
+      .prepare('SELECT session_id, account_id, user_id, agent_id, status, message_count, contexts_used, skills_used, compression_index, created_at, updated_at FROM sessions ORDER BY created_at DESC')
       .all() as SessionRow[];
 
     return rows.map((row) => this.rowToRecord(row));
@@ -208,15 +216,7 @@ export class SessionService {
       return [];
     }
 
-    const formattedMessages = messages.map((m) => {
-      const parts: MessagePart[] = JSON.parse(m.content) as MessagePart[];
-      const text = parts
-        .filter((p): p is MessagePart & { text: string } => p.type === 'text' && typeof p.text === 'string')
-        .map((p) => p.text)
-        .join('\n');
-      return { role: m.role, content: text };
-    });
-
+    const formattedMessages = this.formatMessages(messages);
     return this.extractor.extract(formattedMessages);
   }
 
@@ -251,7 +251,6 @@ export class SessionService {
 
   /**
    * Get session context for search: recent messages as plain text pairs.
-   * Returns empty summaries (archive summary retrieval is P1).
    */
   async getContextForSearch(
     sessionId: string,
@@ -259,14 +258,7 @@ export class SessionService {
     await this.get(sessionId);
 
     const messages = this.getMessages(sessionId);
-    const recentMessages = messages.map((m) => {
-      const parts: MessagePart[] = JSON.parse(m.content) as MessagePart[];
-      const text = parts
-        .filter((p): p is MessagePart & { text: string } => p.type === 'text' && typeof p.text === 'string')
-        .map((p) => p.text)
-        .join('\n');
-      return { role: m.role, content: text };
-    });
+    const recentMessages = this.formatMessages(messages);
 
     return {
       summaries: [],
@@ -274,22 +266,83 @@ export class SessionService {
     };
   }
 
+  /**
+   * Two-phase session commit matching OpenViking session.py commit_async().
+   *
+   * Phase 1 - Archive:
+   *   Generate archive summary, write archive to VFS, clear session messages.
+   *
+   * Phase 2 - Memory extraction + dedup:
+   *   Extract memories from archived messages, write with dedup.
+   */
   private runCommitInBackground(sessionId: string, taskId: string): void {
     this.taskTracker.start(taskId);
 
     const doCommit = async (): Promise<void> => {
       try {
+        const session = await this.get(sessionId);
         const messages = this.getMessages(sessionId);
 
-        const formattedMessages = messages.map((m) => {
-          const parts: MessagePart[] = JSON.parse(m.content) as MessagePart[];
-          const text = parts
-            .filter((p): p is MessagePart & { text: string } => p.type === 'text' && typeof p.text === 'string')
-            .map((p) => p.text)
-            .join('\n');
-          return { role: m.role, content: text };
+        if (messages.length === 0) {
+          this.taskTracker.complete(taskId, {
+            session_id: sessionId,
+            memories_extracted: 0,
+            archived: false,
+          });
+          return;
+        }
+
+        const formattedMessages = this.formatMessages(messages);
+
+        // Phase 1: Archive
+        const compressionIndex = session.compression_index + 1;
+        const archiveUri = `viking://session/${sessionId}/history/archive_${String(compressionIndex).padStart(3, '0')}`;
+
+        let summary: string;
+        try {
+          summary = await this.llm.generateArchiveSummary(formattedMessages);
+        } catch (err) {
+          this.logger.warn(`Archive summary generation failed: ${String(err)}`);
+          const turnCount = formattedMessages.filter((m) => m.role === 'user').length;
+          summary = `# Session Summary\n\n**Overview**: ${turnCount} turns, ${formattedMessages.length} messages`;
+        }
+
+        const archiveAbstract = this.llm.extractAbstractFromOverview(summary);
+
+        // Write archive files to VFS
+        const serializedMessages = messages
+          .map((m) => JSON.stringify({ id: m.id, role: m.role, content: m.content, created_at: m.created_at }))
+          .join('\n') + '\n';
+
+        await this.vfs.writeFile(`${archiveUri}/messages.jsonl`, serializedMessages);
+        await this.vfs.writeFile(`${archiveUri}/.abstract.md`, archiveAbstract);
+        await this.vfs.writeFile(`${archiveUri}/.overview.md`, summary);
+
+        // Clear session messages from DB and update session
+        const now = new Date().toISOString();
+        this.database.db
+          .prepare('DELETE FROM session_messages WHERE session_id = ?')
+          .run(sessionId);
+
+        this.database.db
+          .prepare(
+            `UPDATE sessions SET message_count = 0, compression_index = ?, updated_at = ? WHERE session_id = ?`,
+          )
+          .run(compressionIndex, now, sessionId);
+
+        // Enqueue archive for semantic processing
+        this.semanticQueue.enqueue({
+          uri: archiveUri,
+          contextType: 'memory',
+          accountId: 'default',
+          ownerSpace: 'default',
         });
 
+        this.logger.log(
+          `Phase 1 complete: archived ${messages.length} messages to ${archiveUri}`,
+        );
+
+        // Phase 2: Memory extraction + dedup
         const candidates = await this.extractor.extract(formattedMessages);
 
         let memoriesExtracted = 0;
@@ -297,10 +350,10 @@ export class SessionService {
           memoriesExtracted = await this.memoryWriter.writeAll(candidates);
         }
 
-        const now = new Date().toISOString();
+        const commitNow = new Date().toISOString();
         this.database.db
           .prepare(`UPDATE sessions SET status = 'committed', updated_at = ? WHERE session_id = ?`)
-          .run(now, sessionId);
+          .run(commitNow, sessionId);
 
         this.taskTracker.complete(taskId, {
           session_id: sessionId,
@@ -309,7 +362,7 @@ export class SessionService {
         });
 
         this.logger.log(
-          `Session ${sessionId} committed: ${memoriesExtracted} memories extracted`,
+          `Session ${sessionId} committed: ${memoriesExtracted} memories extracted, archive_${String(compressionIndex).padStart(3, '0')}`,
         );
       } catch (err) {
         this.taskTracker.fail(taskId, String(err));
@@ -318,6 +371,19 @@ export class SessionService {
     };
 
     void doCommit();
+  }
+
+  private formatMessages(
+    messages: SessionMessageRecord[],
+  ): Array<{ role: string; content: string }> {
+    return messages.map((m) => {
+      const parts: MessagePart[] = JSON.parse(m.content) as MessagePart[];
+      const text = parts
+        .filter((p): p is MessagePart & { text: string } => p.type === 'text' && typeof p.text === 'string')
+        .map((p) => p.text)
+        .join('\n');
+      return { role: m.role, content: text };
+    });
   }
 
   private async ensureUserDirectories(): Promise<void> {

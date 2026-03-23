@@ -812,3 +812,61 @@ Input: "Create an RFC document"
 
 Please output JSON:`;
 }
+
+/**
+ * Source: compression/structured_summary.yaml (v5.0.0)
+ */
+export function archiveSummaryPrompt(messages: string): string {
+  return `Analyze the following session and generate a structured summary.
+
+Session content:
+${messages}
+
+Please output the summary directly in Markdown format:
+
+# Session Summary
+
+**One-sentence overview**: [Topic]: [Intent] | [Result] | [Status: Completed/In Progress/Pending]
+
+## Analysis
+Chronological conversation progress (2-4 key milestones):
+1. ...
+2. ...
+
+## Primary Request and Intent
+User's core objectives:
+- ...
+
+## Key Concepts
+Key technical concepts/terms:
+- ...
+
+## Context References
+Context referenced in the session (viking:// URIs, external links, etc.):
+- ...
+
+## Errors and Fixes
+Problems encountered and solutions (write "None" if none):
+- Problem → Solution
+
+## User Messages
+Key user quotes (preserve important expressions):
+- "..."
+
+## Pending Tasks
+Incomplete tasks (write "None" if none):
+- ...
+
+## Current Work
+Work in progress at the end of the conversation.
+
+## Next Step
+Recommended next actions.
+
+---
+
+Notes:
+- Analysis should reflect the complete timeline
+- User Messages should preserve original quotes
+- Keep overall length within 1000 words`;
+}

@@ -16,6 +16,7 @@ function makeSession(overrides: Partial<SessionRecord> = {}): SessionRecord {
     message_count: 0,
     contexts_used: 0,
     skills_used: 0,
+    compression_index: 0,
     created_at: now,
     updated_at: now,
     ...overrides,

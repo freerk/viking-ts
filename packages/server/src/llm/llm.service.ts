@@ -10,6 +10,7 @@ import {
   memoryMergePrompt,
   dedupDecisionPrompt,
   intentAnalysisPrompt,
+  archiveSummaryPrompt,
 } from './prompts';
 
 const DOCUMENT_EXTENSIONS = new Set(['.md', '.txt', '.rst', '.adoc', '.tex']);
@@ -252,6 +253,30 @@ export class LlmService implements OnModuleInit {
 
     return this.complete(
       'You merge memory content. Return only the merged content, no explanation.',
+      prompt,
+      2048,
+    );
+  }
+
+  /**
+   * Generate a structured archive summary for session messages.
+   * Uses the structured_summary prompt from OpenViking.
+   */
+  async generateArchiveSummary(
+    messages: ReadonlyArray<{ role: string; content: string }>,
+  ): Promise<string> {
+    const formatted = messages
+      .map((m) => `[${m.role}]: ${m.content}`)
+      .join('\n');
+
+    if (!formatted.trim()) {
+      return '';
+    }
+
+    const prompt = archiveSummaryPrompt(formatted);
+
+    return this.complete(
+      'You are a session analysis expert. Follow the instructions in the user message exactly.',
       prompt,
       2048,
     );

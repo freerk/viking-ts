@@ -2,6 +2,7 @@ import { SessionMemoryWriterService } from '../src/session/session-memory-writer
 import { VfsService } from '../src/storage/vfs.service';
 import { EmbeddingQueueService } from '../src/queue/embedding-queue.service';
 import { SemanticQueueService } from '../src/queue/semantic-queue.service';
+import { MemoryDeduplicatorService, DedupOutcome } from '../src/session/memory-deduplicator.service';
 import { CandidateMemory } from '../src/session/session-extractor.service';
 
 function makeCandidate(overrides: Partial<CandidateMemory> = {}): CandidateMemory {
@@ -19,6 +20,7 @@ describe('SessionMemoryWriterService', () => {
   let vfs: { writeFile: jest.Mock; readFile: jest.Mock };
   let embeddingQueue: { enqueue: jest.Mock };
   let semanticQueue: { enqueue: jest.Mock };
+  let deduplicator: { deduplicate: jest.Mock };
 
   beforeEach(() => {
     vfs = {
@@ -27,11 +29,15 @@ describe('SessionMemoryWriterService', () => {
     };
     embeddingQueue = { enqueue: jest.fn() };
     semanticQueue = { enqueue: jest.fn() };
+    deduplicator = {
+      deduplicate: jest.fn().mockResolvedValue('created' as DedupOutcome),
+    };
 
     writer = new SessionMemoryWriterService(
       vfs as unknown as VfsService,
       embeddingQueue as unknown as EmbeddingQueueService,
       semanticQueue as unknown as SemanticQueueService,
+      deduplicator as unknown as MemoryDeduplicatorService,
     );
   });
 
@@ -42,7 +48,7 @@ describe('SessionMemoryWriterService', () => {
   });
 
   describe('user space categories', () => {
-    it('should write profile to single file under user space', async () => {
+    it('should write profile to single file under user space (bypasses dedup)', async () => {
       vfs.readFile.mockRejectedValue(new Error('not found'));
 
       const count = await writer.writeAll([
@@ -61,6 +67,8 @@ describe('SessionMemoryWriterService', () => {
           level: 2,
         }),
       );
+      // Profile should NOT call deduplicator
+      expect(deduplicator.deduplicate).not.toHaveBeenCalled();
     });
 
     it('should merge into existing profile content', async () => {
@@ -81,18 +89,27 @@ describe('SessionMemoryWriterService', () => {
       );
     });
 
-    it('should write preferences as separate files under user space', async () => {
+    it('should call deduplicator for preferences category', async () => {
+      deduplicator.deduplicate.mockResolvedValue('created' as DedupOutcome);
+
       const count = await writer.writeAll([
         makeCandidate({ category: 'preferences', abstract: 'Likes dark mode' }),
       ]);
 
       expect(count).toBe(1);
+      expect(deduplicator.deduplicate).toHaveBeenCalledWith(
+        expect.objectContaining({ category: 'preferences' }),
+        'default',
+        'default',
+      );
       const writeCall = vfs.writeFile.mock.calls[0] as [string, string];
       expect(writeCall[0]).toMatch(/^viking:\/\/user\/default\/memories\/preferences\//);
       expect(writeCall[0]).toMatch(/\.md$/);
     });
 
     it('should write entities under user space', async () => {
+      deduplicator.deduplicate.mockResolvedValue('created' as DedupOutcome);
+
       const count = await writer.writeAll([
         makeCandidate({ category: 'entities', abstract: 'Project Viking' }),
       ]);
@@ -103,6 +120,8 @@ describe('SessionMemoryWriterService', () => {
     });
 
     it('should write events under user space', async () => {
+      deduplicator.deduplicate.mockResolvedValue('created' as DedupOutcome);
+
       const count = await writer.writeAll([
         makeCandidate({ category: 'events', abstract: 'Shipped v1.0' }),
       ]);
@@ -115,6 +134,8 @@ describe('SessionMemoryWriterService', () => {
 
   describe('agent space categories', () => {
     it('should write cases under agent space', async () => {
+      deduplicator.deduplicate.mockResolvedValue('created' as DedupOutcome);
+
       const count = await writer.writeAll([
         makeCandidate({ category: 'cases', abstract: 'Fixed auth bug' }),
       ]);
@@ -125,6 +146,8 @@ describe('SessionMemoryWriterService', () => {
     });
 
     it('should write patterns under agent space', async () => {
+      deduplicator.deduplicate.mockResolvedValue('created' as DedupOutcome);
+
       const count = await writer.writeAll([
         makeCandidate({ category: 'patterns', abstract: 'TDD workflow' }),
       ]);
@@ -135,8 +158,49 @@ describe('SessionMemoryWriterService', () => {
     });
   });
 
+  describe('dedup outcomes', () => {
+    it('should not write file when dedup returns "skipped"', async () => {
+      deduplicator.deduplicate.mockResolvedValue('skipped' as DedupOutcome);
+
+      const count = await writer.writeAll([
+        makeCandidate({ category: 'preferences' }),
+      ]);
+
+      expect(count).toBe(0);
+      expect(vfs.writeFile).not.toHaveBeenCalled();
+    });
+
+    it('should not write new file when dedup returns "merged"', async () => {
+      deduplicator.deduplicate.mockResolvedValue('merged' as DedupOutcome);
+
+      const count = await writer.writeAll([
+        makeCandidate({ category: 'preferences' }),
+      ]);
+
+      // merged counts as written (successful)
+      expect(count).toBe(1);
+      // No new VFS file created (deduplicator handled the merge)
+      expect(vfs.writeFile).not.toHaveBeenCalled();
+    });
+
+    it('should create new file when dedup returns "created"', async () => {
+      deduplicator.deduplicate.mockResolvedValue('created' as DedupOutcome);
+
+      const count = await writer.writeAll([
+        makeCandidate({ category: 'preferences', content: 'Prefers dark mode' }),
+      ]);
+
+      expect(count).toBe(1);
+      expect(vfs.writeFile).toHaveBeenCalledWith(
+        expect.stringMatching(/^viking:\/\/user\/default\/memories\/preferences\//),
+        'Prefers dark mode',
+      );
+    });
+  });
+
   it('should enqueue embedding for each written memory', async () => {
     vfs.readFile.mockRejectedValue(new Error('not found'));
+    deduplicator.deduplicate.mockResolvedValue('created' as DedupOutcome);
 
     await writer.writeAll([
       makeCandidate({ category: 'profile' }),
@@ -144,6 +208,7 @@ describe('SessionMemoryWriterService', () => {
       makeCandidate({ category: 'cases' }),
     ]);
 
+    // profile + preferences + cases = 3 embedding enqueues
     expect(embeddingQueue.enqueue).toHaveBeenCalledTimes(3);
     for (const call of embeddingQueue.enqueue.mock.calls) {
       expect(call[0]).toEqual(
@@ -158,6 +223,7 @@ describe('SessionMemoryWriterService', () => {
 
   it('should enqueue semantic processing for affected directories', async () => {
     vfs.readFile.mockRejectedValue(new Error('not found'));
+    deduplicator.deduplicate.mockResolvedValue('created' as DedupOutcome);
 
     await writer.writeAll([
       makeCandidate({ category: 'profile' }),
@@ -172,6 +238,8 @@ describe('SessionMemoryWriterService', () => {
 
   it('should continue writing remaining candidates if one fails', async () => {
     vfs.readFile.mockRejectedValue(new Error('not found'));
+    deduplicator.deduplicate.mockResolvedValue('created' as DedupOutcome);
+
     vfs.writeFile
       .mockResolvedValueOnce({ uri: 'ok' })
       .mockRejectedValueOnce(new Error('write failed'))

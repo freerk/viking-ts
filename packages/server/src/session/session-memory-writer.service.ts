@@ -3,6 +3,7 @@ import { randomUUID } from 'crypto';
 import { VfsService } from '../storage/vfs.service';
 import { EmbeddingQueueService } from '../queue/embedding-queue.service';
 import { SemanticQueueService } from '../queue/semantic-queue.service';
+import { MemoryDeduplicatorService, DedupOutcome } from './memory-deduplicator.service';
 import { CandidateMemory, MemoryCategory } from './session-extractor.service';
 
 /** Category to VFS path mapping, matching OpenViking memory_extractor.py. */
@@ -36,11 +37,14 @@ export class SessionMemoryWriterService {
     private readonly vfs: VfsService,
     private readonly embeddingQueue: EmbeddingQueueService,
     private readonly semanticQueue: SemanticQueueService,
+    private readonly deduplicator: MemoryDeduplicatorService,
   ) {}
 
   /**
    * Write all candidate memories to VFS and enqueue for processing.
-   * Returns the number of memories successfully written.
+   * Profile memories bypass dedup (always merge). All other categories
+   * go through MemoryDeduplicatorService first.
+   * Returns the number of memories successfully written or merged.
    */
   async writeAll(candidates: ReadonlyArray<CandidateMemory>): Promise<number> {
     let written = 0;
@@ -48,10 +52,20 @@ export class SessionMemoryWriterService {
 
     for (const candidate of candidates) {
       try {
-        const dirUri = await this.writeCandidate(candidate);
-        if (dirUri) {
-          affectedDirs.add(dirUri);
-          written++;
+        if (SINGLE_FILE_CATEGORIES.has(candidate.category)) {
+          const dirUri = await this.writeProfileMemory(candidate);
+          if (dirUri) {
+            affectedDirs.add(dirUri);
+            written++;
+          }
+        } else {
+          const result = await this.writeWithDedup(candidate);
+          if (result.dirUri) {
+            affectedDirs.add(result.dirUri);
+          }
+          if (result.outcome !== 'skipped') {
+            written++;
+          }
         }
       } catch (err) {
         this.logger.error(
@@ -68,29 +82,42 @@ export class SessionMemoryWriterService {
     return written;
   }
 
-  private async writeCandidate(candidate: CandidateMemory): Promise<string | null> {
+  private async writeWithDedup(
+    candidate: CandidateMemory,
+  ): Promise<{ outcome: DedupOutcome; dirUri: string | null }> {
+    const accountId = 'default';
+    const ownerSpace = 'default';
+
+    const outcome = await this.deduplicator.deduplicate(candidate, accountId, ownerSpace);
+
+    if (outcome === 'created') {
+      const dirUri = await this.writeDirectoryFile(candidate);
+      return { outcome, dirUri };
+    }
+
+    if (outcome === 'merged') {
+      const spaceBase = USER_CATEGORIES.has(candidate.category)
+        ? 'viking://user/default'
+        : 'viking://agent/default';
+      const catPath = CATEGORY_PATH[candidate.category];
+      const dirUri = `${spaceBase}/${catPath}`;
+      return { outcome, dirUri };
+    }
+
+    this.logger.debug(`Skipped duplicate memory: "${candidate.abstract}"`);
+    return { outcome, dirUri: null };
+  }
+
+  /**
+   * For single-file categories (profile): read existing content and append.
+   * Bypasses dedup entirely (always merge).
+   */
+  private async writeProfileMemory(candidate: CandidateMemory): Promise<string> {
     const spaceBase = USER_CATEGORIES.has(candidate.category)
       ? 'viking://user/default'
       : 'viking://agent/default';
 
     const catPath = CATEGORY_PATH[candidate.category];
-    const isSingleFile = SINGLE_FILE_CATEGORIES.has(candidate.category);
-
-    if (isSingleFile) {
-      return this.writeSingleFile(spaceBase, catPath, candidate);
-    }
-
-    return this.writeDirectoryFile(spaceBase, catPath, candidate);
-  }
-
-  /**
-   * For single-file categories (profile): read existing content and append.
-   */
-  private async writeSingleFile(
-    spaceBase: string,
-    catPath: string,
-    candidate: CandidateMemory,
-  ): Promise<string> {
     const uri = `${spaceBase}/${catPath}`;
     const parentUri = uri.substring(0, uri.lastIndexOf('/'));
 
@@ -123,11 +150,12 @@ export class SessionMemoryWriterService {
   /**
    * For directory categories: create a new file per memory.
    */
-  private async writeDirectoryFile(
-    spaceBase: string,
-    catPath: string,
-    candidate: CandidateMemory,
-  ): Promise<string> {
+  private async writeDirectoryFile(candidate: CandidateMemory): Promise<string> {
+    const spaceBase = USER_CATEGORIES.has(candidate.category)
+      ? 'viking://user/default'
+      : 'viking://agent/default';
+
+    const catPath = CATEGORY_PATH[candidate.category];
     const parentUri = `${spaceBase}/${catPath}`;
     const slug = this.slugify(candidate.abstract);
     const memoryId = `mem_${randomUUID().replace(/-/g, '')}`;

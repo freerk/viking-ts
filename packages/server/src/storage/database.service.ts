@@ -91,6 +91,7 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
         message_count INTEGER NOT NULL DEFAULT 0,
         contexts_used INTEGER NOT NULL DEFAULT 0,
         skills_used INTEGER NOT NULL DEFAULT 0,
+        compression_index INTEGER NOT NULL DEFAULT 0,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
