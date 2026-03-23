@@ -250,7 +250,8 @@ export class SessionService {
   }
 
   /**
-   * Get session context for search: recent messages as plain text pairs.
+   * Get session context for search: recent messages + archive summaries.
+   * Reads up to 3 most recent archive .overview.md files from VFS history.
    */
   async getContextForSearch(
     sessionId: string,
@@ -260,8 +261,34 @@ export class SessionService {
     const messages = this.getMessages(sessionId);
     const recentMessages = this.formatMessages(messages);
 
+    const summaries: string[] = [];
+    try {
+      const historyUri = `viking://session/${sessionId}/history`;
+      const historyExists = await this.vfs.exists(historyUri);
+      if (historyExists) {
+        const entries = await this.vfs.ls(historyUri, { showAllHidden: false });
+        const archiveDirs = entries
+          .filter((e) => e.isDir && e.name.startsWith('archive_'))
+          .sort((a, b) => b.name.localeCompare(a.name))
+          .slice(0, 3);
+
+        for (const dir of archiveDirs) {
+          try {
+            const overview = await this.vfs.readFile(`${dir.uri}/.overview.md`);
+            if (overview.trim()) {
+              summaries.push(overview);
+            }
+          } catch {
+            // skip missing overviews
+          }
+        }
+      }
+    } catch {
+      // history dir may not exist yet
+    }
+
     return {
-      summaries: [],
+      summaries,
       recentMessages,
     };
   }

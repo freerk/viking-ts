@@ -41,6 +41,14 @@ export interface CandidateMemory {
   abstract: string;
   overview: string;
   content: string;
+  toolName?: string;
+  skillName?: string;
+  bestFor?: string;
+  optimalParams?: string;
+  recommendedFlow?: string;
+  keyDependencies?: string;
+  commonFailures?: string;
+  recommendation?: string;
 }
 
 export interface DedupAction {

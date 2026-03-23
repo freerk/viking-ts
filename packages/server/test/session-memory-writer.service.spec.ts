@@ -156,6 +156,73 @@ describe('SessionMemoryWriterService', () => {
       const writeCall = vfs.writeFile.mock.calls[0] as [string, string];
       expect(writeCall[0]).toMatch(/^viking:\/\/agent\/default\/memories\/patterns\//);
     });
+
+    it('should write tools under agent space with toolName as filename', async () => {
+      deduplicator.deduplicate.mockResolvedValue('created' as DedupOutcome);
+
+      const count = await writer.writeAll([
+        makeCandidate({
+          category: 'tools',
+          abstract: 'Docker container management',
+          toolName: 'docker-compose',
+          bestFor: 'Multi-container orchestration',
+        }),
+      ]);
+
+      expect(count).toBe(1);
+      const writeCall = vfs.writeFile.mock.calls[0] as [string, string];
+      expect(writeCall[0]).toMatch(/^viking:\/\/agent\/default\/memories\/tools\//);
+      expect(writeCall[0]).toMatch(/docker-compose\.md$/);
+    });
+
+    it('should write skills under agent space with skillName as filename', async () => {
+      deduplicator.deduplicate.mockResolvedValue('created' as DedupOutcome);
+
+      const count = await writer.writeAll([
+        makeCandidate({
+          category: 'skills',
+          abstract: 'Code review skill',
+          skillName: 'code-review',
+          bestFor: 'PR reviews',
+          commonFailures: 'Missing edge case checks',
+        }),
+      ]);
+
+      expect(count).toBe(1);
+      const writeCall = vfs.writeFile.mock.calls[0] as [string, string];
+      expect(writeCall[0]).toMatch(/^viking:\/\/agent\/default\/memories\/skills\//);
+      expect(writeCall[0]).toMatch(/code-review\.md$/);
+    });
+
+    it('should write extended fields as structured Markdown for tools', async () => {
+      deduplicator.deduplicate.mockResolvedValue('created' as DedupOutcome);
+
+      await writer.writeAll([
+        makeCandidate({
+          category: 'tools',
+          abstract: 'Webpack bundler',
+          toolName: 'webpack',
+          content: 'Webpack is a module bundler.',
+          bestFor: 'Frontend bundling',
+          optimalParams: '--mode production',
+          recommendedFlow: 'Build then deploy',
+          keyDependencies: 'Node.js >= 16',
+          commonFailures: 'OOM on large builds',
+          recommendation: 'Use webpack 5',
+        }),
+      ]);
+
+      const writeCall = vfs.writeFile.mock.calls[0] as [string, string];
+      const content = writeCall[1];
+      expect(content).toContain('Webpack is a module bundler.');
+      expect(content).toContain('## Best For');
+      expect(content).toContain('Frontend bundling');
+      expect(content).toContain('## Optimal Parameters');
+      expect(content).toContain('## Recommended Flow');
+      expect(content).toContain('## Key Dependencies');
+      expect(content).toContain('## Common Failures');
+      expect(content).toContain('## Recommendation');
+    });
   });
 
   describe('dedup outcomes', () => {

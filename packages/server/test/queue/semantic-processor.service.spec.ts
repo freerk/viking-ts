@@ -36,7 +36,18 @@ describe('SemanticProcessorService', () => {
       imports: [
         ConfigModule.forRoot({
           isGlobal: true,
-          load: [() => ({ storage: { path: tempDir } })],
+          load: [() => ({
+        storage: { path: tempDir },
+        semantic: {
+          maxFileContentChars: 30000,
+          maxOverviewPromptChars: 60000,
+          overviewBatchSize: 50,
+          abstractMaxChars: 256,
+          overviewMaxChars: 4000,
+          memoryChunkChars: 2000,
+          memoryChunkOverlap: 200,
+        },
+      })],
         }),
       ],
       providers: [
@@ -177,6 +188,151 @@ describe('SemanticProcessorService', () => {
         (c: Array<{ uri: string }>) => c[0]?.uri.includes('#chunk_'),
       );
       expect(chunkCalls.length).toBeGreaterThan(0);
+    });
+  });
+
+  describe('budget guard', () => {
+    it('should use batched generation when many files exceed prompt budget', async () => {
+      // Create a module with very low budget limits to trigger batching
+      const lowBudgetDir = createTempDir();
+      const lowBudgetModule = await Test.createTestingModule({
+        imports: [
+          ConfigModule.forRoot({
+            isGlobal: true,
+            load: [() => ({
+              storage: { path: lowBudgetDir },
+              semantic: {
+                maxFileContentChars: 30000,
+                maxOverviewPromptChars: 100,
+                overviewBatchSize: 2,
+                abstractMaxChars: 256,
+                overviewMaxChars: 4000,
+                memoryChunkChars: 2000,
+                memoryChunkOverlap: 200,
+              },
+            })],
+          }),
+        ],
+        providers: [
+          SemanticProcessorService,
+          DatabaseService,
+          VfsService,
+          ContextVectorService,
+          {
+            provide: EmbeddingQueueService,
+            useValue: {
+              enqueue: jest.fn(),
+              getStats: jest.fn().mockReturnValue({ queued: 0, active: 0, processed: 0, errors: 0 }),
+            },
+          },
+          {
+            provide: EmbeddingService,
+            useValue: { embed: jest.fn().mockResolvedValue(new Array(1536).fill(0.1)) },
+          },
+          {
+            provide: LlmService,
+            useValue: {
+              summarizeFile: jest.fn().mockResolvedValue('A'.repeat(200)),
+              generateDirectoryOverview: jest.fn().mockResolvedValue('Batched overview'),
+              extractAbstractFromOverview: jest.fn().mockReturnValue('Abstract'),
+            },
+          },
+        ],
+      }).compile();
+
+      await lowBudgetModule.init();
+      const lowBudgetProcessor = lowBudgetModule.get(SemanticProcessorService);
+      const lowBudgetVfs = lowBudgetModule.get(VfsService);
+      const lowBudgetLlm = lowBudgetModule.get(LlmService);
+
+      await lowBudgetVfs.mkdir('viking://resources/big');
+      for (let i = 0; i < 5; i++) {
+        await lowBudgetVfs.writeFile(`viking://resources/big/file${i}.md`, `Content ${i}`);
+      }
+
+      await lowBudgetProcessor.processDirectory({
+        uri: 'viking://resources/big',
+        contextType: 'resource',
+        accountId: 'default',
+        ownerSpace: '',
+      });
+
+      // With 5 files, batchSize=2, overBudget: should call generateDirectoryOverview multiple times
+      // (3 batches + 1 final merge = at least 4 calls)
+      expect(lowBudgetLlm.generateDirectoryOverview).toHaveBeenCalledTimes(4);
+
+      await lowBudgetModule.close();
+    });
+
+    it('should truncate summaries when over budget but not many files', async () => {
+      // Few files but very long summaries that exceed the budget
+      const truncDir = createTempDir();
+      const truncModule = await Test.createTestingModule({
+        imports: [
+          ConfigModule.forRoot({
+            isGlobal: true,
+            load: [() => ({
+              storage: { path: truncDir },
+              semantic: {
+                maxFileContentChars: 30000,
+                maxOverviewPromptChars: 100,
+                overviewBatchSize: 50,
+                abstractMaxChars: 256,
+                overviewMaxChars: 4000,
+                memoryChunkChars: 2000,
+                memoryChunkOverlap: 200,
+              },
+            })],
+          }),
+        ],
+        providers: [
+          SemanticProcessorService,
+          DatabaseService,
+          VfsService,
+          ContextVectorService,
+          {
+            provide: EmbeddingQueueService,
+            useValue: {
+              enqueue: jest.fn(),
+              getStats: jest.fn().mockReturnValue({ queued: 0, active: 0, processed: 0, errors: 0 }),
+            },
+          },
+          {
+            provide: EmbeddingService,
+            useValue: { embed: jest.fn().mockResolvedValue(new Array(1536).fill(0.1)) },
+          },
+          {
+            provide: LlmService,
+            useValue: {
+              summarizeFile: jest.fn().mockResolvedValue('B'.repeat(500)),
+              generateDirectoryOverview: jest.fn().mockResolvedValue('Truncated overview'),
+              extractAbstractFromOverview: jest.fn().mockReturnValue('Abstract'),
+            },
+          },
+        ],
+      }).compile();
+
+      await truncModule.init();
+      const truncProcessor = truncModule.get(SemanticProcessorService);
+      const truncVfs = truncModule.get(VfsService);
+      const truncLlm = truncModule.get(LlmService);
+
+      await truncVfs.mkdir('viking://resources/trunc');
+      await truncVfs.writeFile('viking://resources/trunc/a.md', 'Content A');
+      await truncVfs.writeFile('viking://resources/trunc/b.md', 'Content B');
+
+      await truncProcessor.processDirectory({
+        uri: 'viking://resources/trunc',
+        contextType: 'resource',
+        accountId: 'default',
+        ownerSpace: '',
+      });
+
+      // Not many files (2 < 50), so single generation, not batched
+      // But truncation should have happened (summaries shortened)
+      expect(truncLlm.generateDirectoryOverview).toHaveBeenCalledTimes(1);
+
+      await truncModule.close();
     });
   });
 });

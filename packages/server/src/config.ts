@@ -3,6 +3,7 @@ import { join } from 'path';
 import { homedir } from 'os';
 
 type StorageBackend = 'sqlite' | 'postgres';
+type SearchMode = 'thinking' | 'fast';
 
 interface PostgresConfig {
   host: string;
@@ -10,6 +11,23 @@ interface PostgresConfig {
   username: string;
   password: string;
   database: string;
+}
+
+interface SemanticConfig {
+  maxFileContentChars: number;
+  maxOverviewPromptChars: number;
+  overviewBatchSize: number;
+  abstractMaxChars: number;
+  overviewMaxChars: number;
+  memoryChunkChars: number;
+  memoryChunkOverlap: number;
+}
+
+interface RerankConfig {
+  model: string;
+  apiKey: string;
+  apiBase: string;
+  threshold: number;
 }
 
 interface VikingConfig {
@@ -32,6 +50,10 @@ interface VikingConfig {
     apiKey: string;
     apiBase: string;
   };
+  semantic: SemanticConfig;
+  rerank: RerankConfig;
+  defaultSearchMode: SearchMode;
+  defaultSearchLimit: number;
 }
 
 function resolveStoragePath(raw: string): string {
@@ -71,6 +93,23 @@ export function loadConfig(): VikingConfig {
       apiKey: '',
       apiBase: 'https://api.openai.com/v1',
     },
+    semantic: {
+      maxFileContentChars: 30000,
+      maxOverviewPromptChars: 60000,
+      overviewBatchSize: 50,
+      abstractMaxChars: 256,
+      overviewMaxChars: 4000,
+      memoryChunkChars: 2000,
+      memoryChunkOverlap: 200,
+    },
+    rerank: {
+      model: '',
+      apiKey: '',
+      apiBase: '',
+      threshold: 0,
+    },
+    defaultSearchMode: 'thinking' as SearchMode,
+    defaultSearchLimit: 3,
   };
 
   const configPath = join(homedir(), '.viking-ts', 'config.json');
@@ -164,6 +203,54 @@ export function loadConfig(): VikingConfig {
         fileConfig.llm?.apiBase ??
         defaults.llm.apiBase,
     },
+    semantic: {
+      maxFileContentChars:
+        parseInt(process.env['SEMANTIC_MAX_FILE_CONTENT_CHARS'] ?? '', 10) ||
+        (fileConfig.semantic?.maxFileContentChars ?? defaults.semantic.maxFileContentChars),
+      maxOverviewPromptChars:
+        parseInt(process.env['SEMANTIC_MAX_OVERVIEW_PROMPT_CHARS'] ?? '', 10) ||
+        (fileConfig.semantic?.maxOverviewPromptChars ?? defaults.semantic.maxOverviewPromptChars),
+      overviewBatchSize:
+        parseInt(process.env['SEMANTIC_OVERVIEW_BATCH_SIZE'] ?? '', 10) ||
+        (fileConfig.semantic?.overviewBatchSize ?? defaults.semantic.overviewBatchSize),
+      abstractMaxChars:
+        parseInt(process.env['SEMANTIC_ABSTRACT_MAX_CHARS'] ?? '', 10) ||
+        (fileConfig.semantic?.abstractMaxChars ?? defaults.semantic.abstractMaxChars),
+      overviewMaxChars:
+        parseInt(process.env['SEMANTIC_OVERVIEW_MAX_CHARS'] ?? '', 10) ||
+        (fileConfig.semantic?.overviewMaxChars ?? defaults.semantic.overviewMaxChars),
+      memoryChunkChars:
+        parseInt(process.env['SEMANTIC_MEMORY_CHUNK_CHARS'] ?? '', 10) ||
+        (fileConfig.semantic?.memoryChunkChars ?? defaults.semantic.memoryChunkChars),
+      memoryChunkOverlap:
+        parseInt(process.env['SEMANTIC_MEMORY_CHUNK_OVERLAP'] ?? '', 10) ||
+        (fileConfig.semantic?.memoryChunkOverlap ?? defaults.semantic.memoryChunkOverlap),
+    },
+    rerank: {
+      model:
+        process.env['RERANK_MODEL'] ??
+        fileConfig.rerank?.model ??
+        defaults.rerank.model,
+      apiKey:
+        process.env['RERANK_API_KEY'] ??
+        fileConfig.rerank?.apiKey ??
+        defaults.rerank.apiKey,
+      apiBase:
+        process.env['RERANK_API_BASE'] ??
+        fileConfig.rerank?.apiBase ??
+        defaults.rerank.apiBase,
+      threshold:
+        parseFloat(process.env['RERANK_THRESHOLD'] ?? '') ||
+        (fileConfig.rerank?.threshold ?? defaults.rerank.threshold),
+    },
+    defaultSearchMode: (
+      process.env['DEFAULT_SEARCH_MODE'] ??
+      fileConfig.defaultSearchMode ??
+      defaults.defaultSearchMode
+    ) as SearchMode,
+    defaultSearchLimit:
+      parseInt(process.env['DEFAULT_SEARCH_LIMIT'] ?? '', 10) ||
+      (fileConfig.defaultSearchLimit ?? defaults.defaultSearchLimit),
   };
 
   return config;

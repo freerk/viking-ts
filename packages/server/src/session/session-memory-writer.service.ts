@@ -157,16 +157,16 @@ export class SessionMemoryWriterService {
 
     const catPath = CATEGORY_PATH[candidate.category];
     const parentUri = `${spaceBase}/${catPath}`;
-    const slug = this.slugify(candidate.abstract);
-    const memoryId = `mem_${randomUUID().replace(/-/g, '')}`;
-    const fileName = slug ? `${slug}-${memoryId.slice(0, 8)}.md` : `${memoryId}.md`;
+    const fileName = this.generateFileName(candidate);
     const uri = `${parentUri}/${fileName}`;
 
-    await this.vfs.writeFile(uri, candidate.content);
+    const fileContent = this.buildFileContent(candidate);
+
+    await this.vfs.writeFile(uri, fileContent);
 
     this.enqueueEmbedding({
       uri,
-      text: candidate.content,
+      text: fileContent,
       abstract: candidate.abstract,
       name: fileName,
       parentUri,
@@ -175,6 +175,65 @@ export class SessionMemoryWriterService {
 
     this.logger.log(`Wrote ${candidate.category} memory: ${uri}`);
     return parentUri;
+  }
+
+  /**
+   * Generate a filename for the memory file.
+   * Tools/skills use toolName/skillName if provided; others use abstract slug.
+   */
+  private generateFileName(candidate: CandidateMemory): string {
+    const memoryId = `mem_${randomUUID().replace(/-/g, '')}`;
+
+    if (candidate.category === 'tools' && candidate.toolName) {
+      const slug = this.slugify(candidate.toolName);
+      return slug ? `${slug}.md` : `${memoryId}.md`;
+    }
+
+    if (candidate.category === 'skills' && candidate.skillName) {
+      const slug = this.slugify(candidate.skillName);
+      return slug ? `${slug}.md` : `${memoryId}.md`;
+    }
+
+    const slug = this.slugify(candidate.abstract);
+    return slug ? `${slug}-${memoryId.slice(0, 8)}.md` : `${memoryId}.md`;
+  }
+
+  /**
+   * Build the file content, appending structured Markdown sections
+   * for tools/skills extended fields when present.
+   */
+  private buildFileContent(candidate: CandidateMemory): string {
+    const hasExtendedFields =
+      (candidate.category === 'tools' || candidate.category === 'skills') &&
+      (candidate.bestFor || candidate.optimalParams || candidate.recommendedFlow ||
+       candidate.keyDependencies || candidate.commonFailures || candidate.recommendation);
+
+    if (!hasExtendedFields) {
+      return candidate.content;
+    }
+
+    const sections: string[] = [candidate.content];
+
+    if (candidate.bestFor) {
+      sections.push(`\n## Best For\n\n${candidate.bestFor}`);
+    }
+    if (candidate.optimalParams) {
+      sections.push(`\n## Optimal Parameters\n\n${candidate.optimalParams}`);
+    }
+    if (candidate.recommendedFlow) {
+      sections.push(`\n## Recommended Flow\n\n${candidate.recommendedFlow}`);
+    }
+    if (candidate.keyDependencies) {
+      sections.push(`\n## Key Dependencies\n\n${candidate.keyDependencies}`);
+    }
+    if (candidate.commonFailures) {
+      sections.push(`\n## Common Failures\n\n${candidate.commonFailures}`);
+    }
+    if (candidate.recommendation) {
+      sections.push(`\n## Recommendation\n\n${candidate.recommendation}`);
+    }
+
+    return sections.join('\n');
   }
 
   private enqueueEmbedding(params: {
