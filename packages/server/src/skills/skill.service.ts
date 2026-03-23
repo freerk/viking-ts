@@ -1,10 +1,9 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { v4 as uuid } from 'uuid';
-import { MetadataStoreService } from '../storage/metadata-store.service';
-import { VectorStoreService } from '../storage/vector-store.service';
+import { Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
+import { VfsService } from '../storage/vfs.service';
+import { ContextVectorService } from '../storage/context-vector.service';
 import { EmbeddingService } from '../embedding/embedding.service';
-import { LlmService } from '../llm/llm.service';
-import { VikingUriService } from '../viking-uri/viking-uri.service';
+import { EmbeddingQueueService } from '../queue/embedding-queue.service';
+import { SemanticQueueService } from '../queue/semantic-queue.service';
 import { SkillRecord, SearchResult } from '../shared/types';
 
 @Injectable()
@@ -12,11 +11,11 @@ export class SkillService {
   private readonly logger = new Logger(SkillService.name);
 
   constructor(
-    private readonly metadataStore: MetadataStoreService,
-    private readonly vectorStore: VectorStoreService,
+    private readonly vfs: VfsService,
+    private readonly contextVectors: ContextVectorService,
     private readonly embeddingService: EmbeddingService,
-    private readonly llmService: LlmService,
-    private readonly vikingUri: VikingUriService,
+    @Optional() private readonly embeddingQueue?: EmbeddingQueueService,
+    @Optional() private readonly semanticQueue?: SemanticQueueService,
   ) {}
 
   async createSkill(params: {
@@ -25,53 +24,72 @@ export class SkillService {
     content: string;
     tags?: string[];
   }): Promise<SkillRecord> {
-    const id = uuid();
     const now = new Date().toISOString();
-    const uri = this.vikingUri.build('agent', 'skills', `${params.name}/`);
+    const uri = `viking://agent/default/skills/${params.name}.md`;
+    const parentUri = 'viking://agent/default/skills';
     const tags = params.tags ?? [];
 
-    let l0Abstract = '';
-    let l1Overview = '';
+    await this.vfs.writeFile(uri, params.content);
 
-    try {
-      [l0Abstract, l1Overview] = await Promise.all([
-        this.llmService.generateAbstract(params.content),
-        this.llmService.generateOverview(params.content),
-      ]);
-    } catch (err) {
-      this.logger.warn(`L0/L1 generation failed for skill ${id}: ${String(err)}`);
-      l0Abstract = params.content.slice(0, 100);
-      l1Overview = params.content.slice(0, 500);
+    const l0Abstract = params.content.slice(0, 256);
+    const cvId = ContextVectorService.generateId('default', uri);
+
+    if (this.embeddingQueue) {
+      this.embeddingQueue.enqueue({
+        uri,
+        text: params.content,
+        contextType: 'skill',
+        level: 2,
+        abstract: l0Abstract,
+        name: params.name,
+        parentUri,
+        accountId: 'default',
+        ownerSpace: 'default',
+      });
+    } else {
+      let embedding: number[] | null = null;
+      try {
+        embedding = await this.embeddingService.embed(l0Abstract || params.content);
+      } catch (err) {
+        this.logger.warn(`Embedding failed for skill ${params.name}: ${String(err)}`);
+      }
+      await this.contextVectors.upsert({
+        uri,
+        parentUri,
+        contextType: 'skill',
+        level: 2,
+        abstract: l0Abstract,
+        name: params.name,
+        description: params.description,
+        tags: tags.join(','),
+        accountId: 'default',
+        embedding,
+      });
+    }
+
+    if (this.semanticQueue) {
+      this.semanticQueue.enqueue({
+        uri: parentUri,
+        contextType: 'skill',
+        accountId: 'default',
+        ownerSpace: 'default',
+      });
     }
 
     const skill: SkillRecord = {
-      id,
+      id: cvId,
       name: params.name,
       description: params.description,
       uri,
       tags,
       l0Abstract,
-      l1Overview,
+      l1Overview: '',
       l2Content: params.content,
       createdAt: now,
       updatedAt: now,
     };
 
-    await this.metadataStore.insertSkill(skill);
-
-    try {
-      const vector = await this.embeddingService.embed(l0Abstract || params.content);
-      await this.vectorStore.upsertSkill(id, vector, {
-        uri,
-        text: l0Abstract || params.content.slice(0, 200),
-        name: params.name,
-        description: params.description,
-      });
-    } catch (err) {
-      this.logger.warn(`Vector indexing failed for skill ${id}: ${String(err)}`);
-    }
-
-    this.logger.log(`Created skill ${id}: "${params.name}"`);
+    this.logger.log(`Created skill ${cvId}: "${params.name}"`);
     return skill;
   }
 
@@ -81,35 +99,105 @@ export class SkillService {
     scoreThreshold: number = 0.01,
   ): Promise<SearchResult[]> {
     const vector = await this.embeddingService.embed(query);
-    const results = await this.vectorStore.searchSkills(vector, limit, scoreThreshold);
+    const results = await this.contextVectors.searchSimilar(vector, {
+      limit,
+      scoreThreshold,
+      contextType: 'skill',
+    });
 
     return results.map((r) => ({
       id: r.id,
       uri: r.uri,
-      text: r.text,
+      text: r.abstract || r.description,
       score: r.score,
-      l0Abstract: String(r.metadata['text'] ?? ''),
+      l0Abstract: r.abstract,
     }));
   }
 
   async getSkill(id: string): Promise<SkillRecord> {
-    const skill = await this.metadataStore.getSkillById(id);
-    if (!skill) {
+    const record = await this.contextVectors.getById(id);
+    if (!record || record.contextType !== 'skill') {
       throw new NotFoundException(`Skill ${id} not found`);
     }
-    return skill;
+
+    let content = '';
+    try {
+      content = await this.vfs.readFile(record.uri);
+    } catch {
+      content = record.description;
+    }
+
+    const tags = record.tags ? record.tags.split(',').filter(Boolean) : [];
+
+    return {
+      id: record.id,
+      name: record.name,
+      description: record.description,
+      uri: record.uri,
+      tags,
+      l0Abstract: record.abstract,
+      l1Overview: record.description,
+      l2Content: content,
+      createdAt: record.createdAt,
+      updatedAt: record.updatedAt,
+    };
   }
 
   async listSkills(limit: number = 100, offset: number = 0, tag?: string): Promise<SkillRecord[]> {
-    return this.metadataStore.listSkills(limit, offset, tag);
+    const records = await this.contextVectors.listByContextType('skill', {
+      limit,
+      offset,
+    });
+
+    let filtered = records;
+    if (tag) {
+      filtered = filtered.filter((r) => {
+        const recordTags = r.tags ? r.tags.split(',') : [];
+        return recordTags.includes(tag);
+      });
+    }
+
+    const skills: SkillRecord[] = [];
+    for (const record of filtered) {
+      let content = '';
+      try {
+        content = await this.vfs.readFile(record.uri);
+      } catch {
+        content = record.description;
+      }
+
+      const recordTags = record.tags ? record.tags.split(',').filter(Boolean) : [];
+
+      skills.push({
+        id: record.id,
+        name: record.name,
+        description: record.description,
+        uri: record.uri,
+        tags: recordTags,
+        l0Abstract: record.abstract,
+        l1Overview: record.description,
+        l2Content: content,
+        createdAt: record.createdAt,
+        updatedAt: record.updatedAt,
+      });
+    }
+
+    return skills;
   }
 
   async deleteSkill(id: string): Promise<void> {
-    const deleted = await this.metadataStore.deleteSkill(id);
-    if (!deleted) {
+    const record = await this.contextVectors.getById(id);
+    if (!record || record.contextType !== 'skill') {
       throw new NotFoundException(`Skill ${id} not found`);
     }
-    await this.vectorStore.deleteSkill(id);
+
+    try {
+      await this.vfs.rm(record.uri);
+    } catch {
+      // file may not exist
+    }
+
+    await this.contextVectors.deleteById(id);
     this.logger.log(`Deleted skill ${id}`);
   }
 }

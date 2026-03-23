@@ -71,6 +71,19 @@ In development, accessible without auth.
 - `GET /api/v1/resources/search?q=...` - Search resources
 - `GET /api/v1/ls?uri=viking://...` - List Viking URI contents
 - `GET /api/v1/tree?uri=viking://...` - Tree view
+- `GET /api/v1/fs/ls` - Filesystem list (new)
+- `GET /api/v1/fs/tree` - Filesystem tree (new)
+- `GET /api/v1/fs/stat` - Filesystem stat (new)
+- `POST /api/v1/fs/mkdir` - Create directory (new)
+- `DELETE /api/v1/fs` - Remove file/directory (new)
+- `POST /api/v1/fs/mv` - Move/rename (new)
+- `GET /api/v1/content/read` - Read file content (new)
+- `GET /api/v1/content/abstract` - Get abstract (new)
+- `GET /api/v1/content/overview` - Get overview (new)
+- `GET /api/v1/content/download` - Download file (new)
+- `GET /api/v1/relations` - List relations (new)
+- `POST /api/v1/relations/link` - Create relation (new)
+- `DELETE /api/v1/relations/link` - Remove relation (new)
 
 ## Testing
 
@@ -88,7 +101,48 @@ npm test --workspace=packages/server -- --coverage
 ## Tech stack
 
 - NestJS (REST API framework)
-- vectra (pure TypeScript vector DB)
-- better-sqlite3 (metadata storage)
+- better-sqlite3 (unified SQLite storage, WAL mode)
 - OpenAI SDK (embedding + LLM, works with any OpenAI-compatible endpoint)
 - Zod (validation in plugin client)
+
+## Architecture (Phase 1: Unified Storage)
+
+### Storage layer
+
+All data lives in a single SQLite database (`{STORAGE_PATH}/viking.db`) with 5 tables:
+
+- `vfs_nodes` - Virtual filesystem (files and directories with Viking URIs)
+- `context_vectors` - Unified vector storage with embeddings (JSON-serialized float arrays)
+- `relations` - URI-to-URI relations with optional reason
+- `sessions` - Conversation sessions
+- `session_messages` - Individual messages within sessions
+
+### Core services (packages/server/src/storage/)
+
+- `DatabaseService` - Manages SQLite connection, creates schema on init
+- `VfsService` - Virtual filesystem operations (mkdir, writeFile, readFile, rm, mv, ls, tree, grep, glob)
+- `ContextVectorService` - Vector storage with cosine similarity search (pure TypeScript, no native deps)
+- `RelationsService` - URI relation CRUD
+
+### Viking URI scheme
+
+All content is addressed via `viking://` URIs:
+- `viking://resources/{id}.md` - Resources
+- `viking://agent/{agentId}/memories/{id}.md` - Agent memories
+- `viking://user/{userId}/memories/{id}.md` - User memories
+- `viking://agent/{agentId}/skills/{name}.md` - Skills
+
+### ID generation
+
+Context vector IDs are deterministic: `MD5("{accountId}:{uri}")`. This enables idempotent upserts.
+
+### Vector search
+
+Cosine similarity is computed in TypeScript (not SQL). Rows are filtered by contextType/parentUriPrefix in SQL, then embeddings are deserialized and scored in-process. Default score threshold is 0.0.
+
+### Legacy files (not imported, safe to remove later)
+
+- `src/storage/database/` - TypeORM entities, migrations, postgres services
+- `src/storage/metadata-store.service.ts` - Old SQLite metadata store
+- `src/storage/vector-store.service.ts` - Old vectra wrapper
+- `src/viking-uri/viking-uri.service.ts` - Old URI service (replaced by VfsService)

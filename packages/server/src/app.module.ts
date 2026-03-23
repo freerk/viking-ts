@@ -8,6 +8,10 @@ import { VikingUriModule } from './viking-uri/viking-uri.module';
 import { MemoryModule } from './memory/memory.module';
 import { ResourceModule } from './resource/resource.module';
 import { SkillModule } from './skills/skill.module';
+import { FsModule } from './fs/fs.module';
+import { ContentModule } from './content/content.module';
+import { RelationsModule } from './relations/relations.module';
+import { QueueModule } from './queue/queue.module';
 import { loadConfig } from './config';
 
 @Module({
@@ -17,13 +21,17 @@ import { loadConfig } from './config';
       load: [loadConfig],
     }),
     HealthModule,
-    StorageModule.register(),
+    StorageModule,
     EmbeddingModule,
     LlmModule,
+    QueueModule,
     VikingUriModule,
     MemoryModule,
     ResourceModule,
     SkillModule,
+    FsModule,
+    ContentModule,
+    RelationsModule,
   ],
 })
 export class AppModule {}

@@ -1,16 +1,17 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
 import { v4 as uuid } from 'uuid';
-import { MetadataStoreService } from '../storage/metadata-store.service';
-import { VectorStoreService } from '../storage/vector-store.service';
+import { VfsService } from '../storage/vfs.service';
+import { ContextVectorService } from '../storage/context-vector.service';
+import { DatabaseService } from '../storage/database.service';
 import { EmbeddingService } from '../embedding/embedding.service';
 import { LlmService } from '../llm/llm.service';
-import { VikingUriService } from '../viking-uri/viking-uri.service';
+import { EmbeddingQueueService } from '../queue/embedding-queue.service';
+import { SemanticQueueService } from '../queue/semantic-queue.service';
 import {
   MemoryRecord,
   MemoryType,
   MemoryCategory,
   SearchResult,
-  SessionMessage,
 } from '../shared/types';
 
 @Injectable()
@@ -18,12 +19,32 @@ export class MemoryService {
   private readonly logger = new Logger(MemoryService.name);
 
   constructor(
-    private readonly metadataStore: MetadataStoreService,
-    private readonly vectorStore: VectorStoreService,
+    private readonly vfs: VfsService,
+    private readonly contextVectors: ContextVectorService,
+    private readonly database: DatabaseService,
     private readonly embeddingService: EmbeddingService,
     private readonly llmService: LlmService,
-    private readonly vikingUri: VikingUriService,
+    @Optional() private readonly embeddingQueue?: EmbeddingQueueService,
+    @Optional() private readonly semanticQueue?: SemanticQueueService,
   ) {}
+
+  private buildMemoryUri(id: string, type: MemoryType, agentId?: string, userId?: string): string {
+    if (type === 'agent') {
+      const space = agentId ?? 'default';
+      return `viking://agent/${space}/memories/${id}.md`;
+    }
+    const space = userId ?? 'default';
+    return `viking://user/${space}/memories/${id}.md`;
+  }
+
+  private parentUriForMemory(type: MemoryType, agentId?: string, userId?: string): string {
+    if (type === 'agent') {
+      const space = agentId ?? 'default';
+      return `viking://agent/${space}/memories`;
+    }
+    const space = userId ?? 'default';
+    return `viking://user/${space}/memories`;
+  }
 
   async createMemory(params: {
     text: string;
@@ -37,27 +58,58 @@ export class MemoryService {
     const now = new Date().toISOString();
     const type: MemoryType = params.type ?? 'user';
     const category: MemoryCategory = params.category ?? 'general';
+    const uri = params.uri ?? this.buildMemoryUri(id, type, params.agentId, params.userId);
+    const parentUri = this.parentUriForMemory(type, params.agentId, params.userId);
+    const ownerSpace = type === 'agent' ? (params.agentId ?? 'default') : (params.userId ?? 'default');
 
-    const scope = type === 'user' ? 'user' : 'agent';
-    const uri =
-      params.uri ?? this.vikingUri.build(scope, 'memories', category, `${id}.md`);
+    await this.vfs.writeFile(uri, params.text);
 
-    let l0Abstract = '';
-    let l1Overview = '';
+    const l0Abstract = params.text.slice(0, 256);
 
-    try {
-      [l0Abstract, l1Overview] = await Promise.all([
-        this.llmService.generateAbstract(params.text),
-        this.llmService.generateOverview(params.text),
-      ]);
-    } catch (err) {
-      this.logger.warn(`L0/L1 generation failed, storing without summaries: ${String(err)}`);
-      l0Abstract = params.text.slice(0, 100);
-      l1Overview = params.text.slice(0, 500);
+    if (this.embeddingQueue) {
+      this.embeddingQueue.enqueue({
+        uri,
+        text: params.text,
+        contextType: 'memory',
+        level: 2,
+        abstract: l0Abstract,
+        name: `${id}.md`,
+        parentUri,
+        accountId: 'default',
+        ownerSpace,
+      });
+    } else {
+      let embedding: number[] | null = null;
+      try {
+        embedding = await this.embeddingService.embed(l0Abstract || params.text);
+      } catch (err) {
+        this.logger.warn(`Embedding failed for memory ${id}: ${String(err)}`);
+      }
+      await this.contextVectors.upsert({
+        uri,
+        parentUri,
+        contextType: 'memory',
+        level: 2,
+        abstract: l0Abstract,
+        name: `${id}.md`,
+        tags: category,
+        accountId: 'default',
+        ownerSpace,
+        embedding,
+      });
+    }
+
+    if (this.semanticQueue) {
+      this.semanticQueue.enqueue({
+        uri: parentUri,
+        contextType: 'memory',
+        accountId: 'default',
+        ownerSpace,
+      });
     }
 
     const memory: MemoryRecord = {
-      id,
+      id: ContextVectorService.generateId('default', uri),
       text: params.text,
       type,
       category,
@@ -65,29 +117,13 @@ export class MemoryService {
       userId: params.userId,
       uri,
       l0Abstract,
-      l1Overview,
+      l1Overview: '',
       l2Content: params.text,
       createdAt: now,
       updatedAt: now,
     };
 
-    await this.metadataStore.insertMemory(memory);
-
-    try {
-      const vector = await this.embeddingService.embed(l0Abstract || params.text);
-      await this.vectorStore.upsertMemory(id, vector, {
-        uri,
-        text: l0Abstract || params.text.slice(0, 200),
-        type,
-        category,
-        agentId: params.agentId ?? '',
-        userId: params.userId ?? '',
-      });
-    } catch (err) {
-      this.logger.warn(`Vector indexing failed for memory ${id}: ${String(err)}`);
-    }
-
-    this.logger.log(`Created memory ${id} [${type}/${category}]`);
+    this.logger.log(`Created memory ${memory.id} [${type}/${category}]`);
     return memory;
   }
 
@@ -98,32 +134,38 @@ export class MemoryService {
     uriFilter?: string,
   ): Promise<SearchResult[]> {
     const vector = await this.embeddingService.embed(query);
-    const results = await this.vectorStore.searchMemories(vector, limit * 2, scoreThreshold);
+    const results = await this.contextVectors.searchSimilar(vector, {
+      limit: limit * 2,
+      scoreThreshold,
+      contextType: 'memory',
+      parentUriPrefix: uriFilter,
+    });
 
-    let filtered = results;
-    if (uriFilter) {
-      const parsed = this.vikingUri.parse(uriFilter);
-      const prefix = `viking://${parsed.fullPath}`;
-      filtered = results.filter((r) => r.uri.startsWith(prefix));
-    }
-
-    return filtered.slice(0, limit).map((r) => ({
+    return results.slice(0, limit).map((r) => ({
       id: r.id,
       uri: r.uri,
-      text: r.text,
+      text: r.abstract || r.description,
       score: r.score,
-      l0Abstract: String(r.metadata['text'] ?? ''),
-      category: String(r.metadata['category'] ?? ''),
-      type: String(r.metadata['type'] ?? ''),
+      l0Abstract: r.abstract,
+      category: r.tags,
+      type: r.uri.startsWith('viking://agent/') ? 'agent' : 'user',
     }));
   }
 
   async getMemory(id: string): Promise<MemoryRecord> {
-    const memory = await this.metadataStore.getMemoryById(id);
-    if (!memory) {
+    const record = await this.contextVectors.getById(id);
+    if (!record || record.contextType !== 'memory') {
       throw new NotFoundException(`Memory ${id} not found`);
     }
-    return memory;
+
+    let content = '';
+    try {
+      content = await this.vfs.readFile(record.uri);
+    } catch {
+      content = record.description;
+    }
+
+    return this.contextRecordToMemory(record, content);
   }
 
   async listMemories(filters: {
@@ -134,15 +176,56 @@ export class MemoryService {
     limit?: number;
     offset?: number;
   }): Promise<MemoryRecord[]> {
-    return this.metadataStore.listMemories(filters);
+    let ownerSpace: string | undefined;
+    if (filters.agentId) {
+      ownerSpace = filters.agentId;
+    } else if (filters.userId) {
+      ownerSpace = filters.userId;
+    }
+
+    const records = await this.contextVectors.listByContextType('memory', {
+      accountId: 'default',
+      ownerSpace,
+      limit: filters.limit,
+      offset: filters.offset,
+    });
+
+    let filtered = records;
+    if (filters.type) {
+      const prefix = filters.type === 'agent' ? 'viking://agent/' : 'viking://user/';
+      filtered = filtered.filter((r) => r.uri.startsWith(prefix));
+    }
+    if (filters.category) {
+      filtered = filtered.filter((r) => r.tags === filters.category);
+    }
+
+    const memories: MemoryRecord[] = [];
+    for (const record of filtered) {
+      let content = '';
+      try {
+        content = await this.vfs.readFile(record.uri);
+      } catch {
+        content = record.description;
+      }
+      memories.push(this.contextRecordToMemory(record, content));
+    }
+
+    return memories;
   }
 
   async deleteMemory(id: string): Promise<void> {
-    const deleted = await this.metadataStore.deleteMemory(id);
-    if (!deleted) {
+    const record = await this.contextVectors.getById(id);
+    if (!record || record.contextType !== 'memory') {
       throw new NotFoundException(`Memory ${id} not found`);
     }
-    await this.vectorStore.deleteMemory(id);
+
+    try {
+      await this.vfs.rm(record.uri);
+    } catch {
+      // file may not exist
+    }
+
+    await this.contextVectors.deleteById(id);
     this.logger.log(`Deleted memory ${id}`);
   }
 
@@ -154,23 +237,20 @@ export class MemoryService {
     const sessionId = uuid();
     const now = new Date().toISOString();
 
-    await this.metadataStore.insertSession({
-      id: sessionId,
-      agentId,
-      userId,
-      createdAt: now,
-      updatedAt: now,
-    });
+    this.database.db
+      .prepare(
+        `INSERT INTO sessions (id, account_id, agent_id, user_id, status, created_at, updated_at)
+         VALUES (?, 'default', ?, ?, 'active', ?, ?)`,
+      )
+      .run(sessionId, agentId ?? null, userId ?? null, now, now);
 
     for (const msg of messages) {
-      const msgRecord: SessionMessage = {
-        id: uuid(),
-        sessionId,
-        role: msg.role as 'user' | 'assistant',
-        content: msg.content,
-        createdAt: now,
-      };
-      await this.metadataStore.insertSessionMessage(msgRecord);
+      this.database.db
+        .prepare(
+          `INSERT INTO session_messages (id, session_id, role, content, created_at)
+           VALUES (?, ?, ?, ?, ?)`,
+        )
+        .run(uuid(), sessionId, msg.role, msg.content, now);
     }
 
     let extracted: Array<{ text: string; category: string }> = [];
@@ -202,5 +282,28 @@ export class MemoryService {
     );
 
     return createdMemories;
+  }
+
+  private contextRecordToMemory(
+    record: { id: string; uri: string; abstract: string; description: string; tags: string; ownerSpace: string; createdAt: string; updatedAt: string },
+    content: string,
+  ): MemoryRecord {
+    const isAgent = record.uri.startsWith('viking://agent/');
+    const type: MemoryType = isAgent ? 'agent' : 'user';
+
+    return {
+      id: record.id,
+      text: content,
+      type,
+      category: (record.tags || 'general') as MemoryCategory,
+      agentId: isAgent ? record.ownerSpace : undefined,
+      userId: !isAgent ? record.ownerSpace : undefined,
+      uri: record.uri,
+      l0Abstract: record.abstract,
+      l1Overview: record.description,
+      l2Content: content,
+      createdAt: record.createdAt,
+      updatedAt: record.updatedAt,
+    };
   }
 }

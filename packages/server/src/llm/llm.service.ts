@@ -58,6 +58,51 @@ export class LlmService implements OnModuleInit {
     );
   }
 
+  async summarizeFile(fileName: string, content: string): Promise<string> {
+    const capped = content.slice(0, 30_000);
+    return this.complete(
+      'Summarize this file in 2-3 sentences. Return only the summary, no prefix.',
+      `File: ${fileName}\n\n${capped}`,
+      200,
+    );
+  }
+
+  async generateDirectoryOverview(
+    dirName: string,
+    fileSummaries: ReadonlyArray<{ name: string; summary: string }>,
+    childAbstracts: ReadonlyArray<{ name: string; abstract: string }>,
+  ): Promise<string> {
+    const filePart = fileSummaries
+      .map((f) => `- ${f.name}: ${f.summary}`)
+      .join('\n');
+    const childPart = childAbstracts
+      .map((c) => `- ${c.name}: ${c.abstract}`)
+      .join('\n');
+
+    const userContent = [
+      `Generate a concise overview of this directory '${dirName}'.`,
+      filePart ? `\nFiles:\n${filePart}` : '',
+      childPart ? `\nSubdirectories:\n${childPart}` : '',
+    ].join('');
+
+    return this.complete(
+      'Generate a concise directory overview. Include key themes and contents. Max 4000 characters. Return only the overview.',
+      userContent.slice(0, 60_000),
+      1024,
+    );
+  }
+
+  extractAbstractFromOverview(overviewText: string): string {
+    const lines = overviewText.split('\n');
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (trimmed.length === 0) continue;
+      if (trimmed.startsWith('#')) continue;
+      return trimmed.slice(0, 256);
+    }
+    return overviewText.slice(0, 256);
+  }
+
   async extractMemories(
     messages: Array<{ role: string; content: string }>,
   ): Promise<Array<{ text: string; category: string }>> {

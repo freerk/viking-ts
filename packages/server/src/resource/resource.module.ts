@@ -1,10 +1,10 @@
 import { Module } from '@nestjs/common';
 import { ResourceService } from './resource.service';
 import { ResourceController } from './resource.controller';
-import { VikingUriModule } from '../viking-uri/viking-uri.module';
+import { QueueModule } from '../queue/queue.module';
 
 @Module({
-  imports: [VikingUriModule],
+  imports: [QueueModule],
   providers: [ResourceService],
   controllers: [ResourceController],
   exports: [ResourceService],

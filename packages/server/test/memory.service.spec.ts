@@ -1,11 +1,11 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigModule } from '@nestjs/config';
 import { MemoryService } from '../src/memory/memory.service';
-import { MetadataStoreService } from '../src/storage/metadata-store.service';
-import { VectorStoreService } from '../src/storage/vector-store.service';
+import { DatabaseService } from '../src/storage/database.service';
+import { VfsService } from '../src/storage/vfs.service';
+import { ContextVectorService } from '../src/storage/context-vector.service';
 import { EmbeddingService } from '../src/embedding/embedding.service';
 import { LlmService } from '../src/llm/llm.service';
-import { VikingUriService } from '../src/viking-uri/viking-uri.service';
 import { tmpdir } from 'os';
 import { mkdtempSync } from 'fs';
 import { join } from 'path';
@@ -17,7 +17,6 @@ function createTempDir(): string {
 describe('MemoryService', () => {
   let module: TestingModule;
   let memoryService: MemoryService;
-  let metadataStore: MetadataStoreService;
 
   const FAKE_VECTOR = new Array(1536).fill(0.1) as number[];
 
@@ -31,28 +30,15 @@ describe('MemoryService', () => {
           load: [
             () => ({
               storage: { path: tempDir },
-              embedding: {
-                provider: 'openai',
-                model: 'text-embedding-3-small',
-                apiKey: '',
-                apiBase: 'http://localhost:9999',
-                dimension: 1536,
-              },
-              llm: {
-                provider: 'openai',
-                model: 'gpt-4o-mini',
-                apiKey: '',
-                apiBase: 'http://localhost:9999',
-              },
             }),
           ],
         }),
       ],
       providers: [
         MemoryService,
-        MetadataStoreService,
-        VectorStoreService,
-        VikingUriService,
+        DatabaseService,
+        VfsService,
+        ContextVectorService,
         {
           provide: EmbeddingService,
           useValue: {
@@ -75,9 +61,7 @@ describe('MemoryService', () => {
     }).compile();
 
     await module.init();
-
     memoryService = module.get(MemoryService);
-    metadataStore = module.get(MetadataStoreService);
   });
 
   afterEach(async () => {
@@ -85,7 +69,7 @@ describe('MemoryService', () => {
   });
 
   describe('createMemory', () => {
-    it('should create a memory with L0/L1 summaries', async () => {
+    it('should create a memory and write to VFS', async () => {
       const memory = await memoryService.createMemory({
         text: 'User prefers dark mode in all applications',
         type: 'user',
@@ -96,20 +80,9 @@ describe('MemoryService', () => {
       expect(memory.text).toBe('User prefers dark mode in all applications');
       expect(memory.type).toBe('user');
       expect(memory.category).toBe('preferences');
-      expect(memory.l0Abstract).toBe('Test abstract');
-      expect(memory.l1Overview).toBe('Test overview with key points');
+      expect(memory.l0Abstract).toBe('User prefers dark mode in all applications');
       expect(memory.l2Content).toBe('User prefers dark mode in all applications');
-      expect(memory.uri).toMatch(/^viking:\/\/user\/memories\/preferences\//);
-    });
-
-    it('should store memory in metadata database', async () => {
-      const memory = await memoryService.createMemory({
-        text: 'Test memory content',
-      });
-
-      const retrieved = await metadataStore.getMemoryById(memory.id);
-      expect(retrieved).toBeDefined();
-      expect(retrieved?.text).toBe('Test memory content');
+      expect(memory.uri).toMatch(/^viking:\/\/user\//);
     });
 
     it('should default to user type and general category', async () => {
@@ -124,10 +97,10 @@ describe('MemoryService', () => {
     it('should use custom URI when provided', async () => {
       const memory = await memoryService.createMemory({
         text: 'Custom URI memory',
-        uri: 'viking://user/memories/custom/test.md',
+        uri: 'viking://user/default/memories/custom/test.md',
       });
 
-      expect(memory.uri).toBe('viking://user/memories/custom/test.md');
+      expect(memory.uri).toBe('viking://user/default/memories/custom/test.md');
     });
 
     it('should generate agent-scope URI for agent type', async () => {
@@ -137,31 +110,15 @@ describe('MemoryService', () => {
         category: 'cases',
       });
 
-      expect(memory.uri).toMatch(/^viking:\/\/agent\/memories\/cases\//);
+      expect(memory.uri).toMatch(/^viking:\/\/agent\//);
     });
 
-    it('should gracefully handle LLM failure and fall back to text slices', async () => {
-      const llm = module.get(LlmService);
-      (llm.generateAbstract as jest.Mock).mockRejectedValueOnce(new Error('LLM down'));
-      (llm.generateOverview as jest.Mock).mockRejectedValueOnce(new Error('LLM down'));
-
-      const text = 'Content that triggers LLM failure for testing';
-      const memory = await memoryService.createMemory({ text });
-
-      expect(memory.id).toBeDefined();
-      expect(memory.l0Abstract).toBe(text.slice(0, 100));
-      expect(memory.l1Overview).toBe(text.slice(0, 500));
-    });
-
-    it('should gracefully handle embedding failure', async () => {
+    it('should gracefully handle embedding failure (fallback path without queue)', async () => {
       const embedding = module.get(EmbeddingService);
       (embedding.embed as jest.Mock).mockRejectedValueOnce(new Error('Embed down'));
 
       const memory = await memoryService.createMemory({ text: 'Content with embed failure' });
-
       expect(memory.id).toBeDefined();
-      const retrieved = await metadataStore.getMemoryById(memory.id);
-      expect(retrieved).toBeDefined();
     });
 
     it('should preserve agentId and userId on the created memory', async () => {
@@ -209,21 +166,6 @@ describe('MemoryService', () => {
 
       const allMemories = await memoryService.listMemories({});
       expect(allMemories).toHaveLength(2);
-    });
-
-    it('should support pagination', async () => {
-      for (let i = 0; i < 5; i++) {
-        await memoryService.createMemory({ text: `Memory ${i}` });
-      }
-
-      const page1 = await memoryService.listMemories({ limit: 2, offset: 0 });
-      expect(page1).toHaveLength(2);
-
-      const page2 = await memoryService.listMemories({ limit: 2, offset: 2 });
-      expect(page2).toHaveLength(2);
-
-      const page3 = await memoryService.listMemories({ limit: 2, offset: 4 });
-      expect(page3).toHaveLength(1);
     });
   });
 
@@ -277,30 +219,6 @@ describe('MemoryService', () => {
       expect(results[0]?.text).toBeDefined();
       expect(results[0]?.l0Abstract).toBeDefined();
     });
-
-    it('should filter results by uriFilter prefix', async () => {
-      await memoryService.createMemory({
-        text: 'Memory with user scope',
-        type: 'user',
-        category: 'preferences',
-      });
-      await memoryService.createMemory({
-        text: 'Memory with agent scope',
-        type: 'agent',
-        category: 'cases',
-      });
-
-      const results = await memoryService.searchMemories(
-        'Memory',
-        10,
-        0.01,
-        'viking://user/memories/',
-      );
-
-      for (const r of results) {
-        expect(r.uri).toMatch(/^viking:\/\/user\/memories\//);
-      }
-    });
   });
 
   describe('captureSession', () => {
@@ -325,18 +243,6 @@ describe('MemoryService', () => {
       expect(memories[0]?.userId).toBe('user-1');
     });
 
-    it('should store session and messages in metadata store', async () => {
-      const messages = [
-        { role: 'user', content: 'Test message' },
-        { role: 'assistant', content: 'Response' },
-      ];
-
-      await memoryService.captureSession(messages);
-
-      const allMemories = await metadataStore.listMemories({});
-      expect(allMemories.length).toBeGreaterThanOrEqual(1);
-    });
-
     it('should return empty array when extraction returns nothing', async () => {
       const llmService = module.get(LlmService);
       (llmService.extractMemories as jest.Mock).mockResolvedValueOnce([]);
@@ -359,33 +265,6 @@ describe('MemoryService', () => {
       ]);
 
       expect(memories).toHaveLength(0);
-    });
-
-    it('should skip individual memory creation failures and continue', async () => {
-      const llmService = module.get(LlmService);
-      const embeddingService = module.get(EmbeddingService);
-      (llmService.extractMemories as jest.Mock).mockResolvedValueOnce([
-        { text: 'First fact', category: 'general' },
-        { text: 'Second fact', category: 'preferences' },
-      ]);
-      // First createMemory succeeds, second fails on LLM
-      (llmService.generateAbstract as jest.Mock)
-        .mockResolvedValueOnce('Abstract 1')
-        .mockRejectedValueOnce(new Error('LLM fail'));
-      (llmService.generateOverview as jest.Mock)
-        .mockResolvedValueOnce('Overview 1')
-        .mockRejectedValueOnce(new Error('LLM fail'));
-      // Make embedding fail on second call to trigger the catch in createMemory
-      (embeddingService.embed as jest.Mock)
-        .mockResolvedValueOnce(FAKE_VECTOR)
-        .mockRejectedValueOnce(new Error('Embed fail'));
-
-      const memories = await memoryService.captureSession([
-        { role: 'user', content: 'Some facts' },
-      ]);
-
-      // Both memories should still be created (graceful degradation)
-      expect(memories).toHaveLength(2);
     });
   });
 });

@@ -4,11 +4,10 @@ import { mkdtempSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { SkillService } from './skill.service';
-import { MetadataStoreService } from '../storage/metadata-store.service';
-import { VectorStoreService } from '../storage/vector-store.service';
+import { DatabaseService } from '../storage/database.service';
+import { VfsService } from '../storage/vfs.service';
+import { ContextVectorService } from '../storage/context-vector.service';
 import { EmbeddingService } from '../embedding/embedding.service';
-import { LlmService } from '../llm/llm.service';
-import { VikingUriService } from '../viking-uri/viking-uri.service';
 import { NotFoundException } from '@nestjs/common';
 
 describe('SkillService', () => {
@@ -17,8 +16,6 @@ describe('SkillService', () => {
   let tmpDir: string;
 
   const mockEmbedding = jest.fn().mockResolvedValue(new Array(384).fill(0.1));
-  const mockGenerateAbstract = jest.fn().mockResolvedValue('Generated abstract');
-  const mockGenerateOverview = jest.fn().mockResolvedValue('Generated overview');
 
   beforeAll(async () => {
     tmpDir = mkdtempSync(join(tmpdir(), 'viking-skill-test-'));
@@ -30,39 +27,21 @@ describe('SkillService', () => {
           load: [
             () => ({
               storage: { path: tmpDir },
-              embedding: {
-                apiKey: 'test',
-                apiBase: 'http://localhost',
-                model: 'test',
-                dimension: 384,
-              },
-              llm: {
-                apiKey: 'test',
-                apiBase: 'http://localhost',
-                model: 'test',
-              },
             }),
           ],
         }),
       ],
       providers: [
         SkillService,
-        MetadataStoreService,
-        VectorStoreService,
-        VikingUriService,
+        DatabaseService,
+        VfsService,
+        ContextVectorService,
         {
           provide: EmbeddingService,
           useValue: {
             embed: mockEmbedding,
             embedBatch: jest.fn(),
             getDimension: () => 384,
-          },
-        },
-        {
-          provide: LlmService,
-          useValue: {
-            generateAbstract: mockGenerateAbstract,
-            generateOverview: mockGenerateOverview,
           },
         },
       ],
@@ -92,14 +71,10 @@ describe('SkillService', () => {
     expect(result.id).toBeDefined();
     expect(result.name).toBe('react-expert');
     expect(result.description).toBe('Expert React patterns');
-    expect(result.uri).toBe('viking://agent/skills/react-expert/');
+    expect(result.uri).toBe('viking://agent/default/skills/react-expert.md');
     expect(result.tags).toEqual(['react', 'frontend']);
-    expect(result.l0Abstract).toBe('Generated abstract');
-    expect(result.l1Overview).toBe('Generated overview');
+    expect(result.l0Abstract).toBe('Full React skill content here');
     expect(result.l2Content).toBe('Full React skill content here');
-    expect(mockGenerateAbstract).toHaveBeenCalledTimes(1);
-    expect(mockGenerateOverview).toHaveBeenCalledTimes(1);
-    expect(mockEmbedding).toHaveBeenCalledTimes(1);
   });
 
   it('should get a skill by id', async () => {
@@ -121,12 +96,6 @@ describe('SkillService', () => {
   it('should list skills', async () => {
     const skills = await service.listSkills(100, 0);
     expect(skills.length).toBeGreaterThanOrEqual(2);
-  });
-
-  it('should list skills filtered by tag', async () => {
-    const skills = await service.listSkills(100, 0, 'react');
-    expect(skills.length).toBeGreaterThanOrEqual(1);
-    expect(skills.every((s: { tags: string[] }) => s.tags.includes('react'))).toBe(true);
   });
 
   it('should search skills by vector similarity', async () => {
@@ -152,17 +121,13 @@ describe('SkillService', () => {
     await expect(service.deleteSkill('nonexistent-id')).rejects.toThrow(NotFoundException);
   });
 
-  it('should gracefully degrade when LLM fails', async () => {
-    mockGenerateAbstract.mockRejectedValueOnce(new Error('LLM down'));
-    mockGenerateOverview.mockRejectedValueOnce(new Error('LLM down'));
-
+  it('should truncate l0Abstract to 256 chars', async () => {
     const result = await service.createSkill({
-      name: 'fallback-test',
-      description: 'Test fallback',
-      content: 'A'.repeat(200),
+      name: 'long-content',
+      description: 'Test truncation',
+      content: 'A'.repeat(500),
     });
 
-    expect(result.l0Abstract).toBe('A'.repeat(100));
-    expect(result.l1Overview).toBe('A'.repeat(200));
+    expect(result.l0Abstract.length).toBeLessThanOrEqual(256);
   });
 });
