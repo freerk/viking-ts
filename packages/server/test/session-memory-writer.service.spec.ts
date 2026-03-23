@@ -10,7 +10,6 @@ function makeCandidate(overrides: Partial<CandidateMemory> = {}): CandidateMemor
     abstract: 'User prefers TypeScript',
     overview: 'Detailed preference info',
     content: 'The user prefers TypeScript for all backend work.',
-    language: 'auto',
     ...overrides,
   };
 }

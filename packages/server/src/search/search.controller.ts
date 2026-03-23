@@ -12,7 +12,7 @@ import {
   SearchRequestDto,
   GrepRequestDto,
   GlobRequestDto,
-  MatchedContextResponse,
+  FindResult,
   GrepMatch,
 } from './search.dto';
 import { okResponse, errorResponse } from '../shared/api-response.helper';
@@ -28,16 +28,16 @@ export class SearchController {
   @ApiOperation({ summary: 'Hierarchical semantic search (find)' })
   async find(
     @Body() dto: FindRequestDto,
-  ): Promise<ApiResponse<{ contexts: MatchedContextResponse[] }>> {
+  ): Promise<ApiResponse<FindResult>> {
     const startTime = Date.now();
     try {
-      const contexts = await this.searchService.find({
+      const result = await this.searchService.find({
         query: dto.query,
         targetDirectories: dto.target_uri ? [dto.target_uri] : undefined,
         limit: dto.node_limit ?? dto.limit ?? 10,
         scoreThreshold: dto.score_threshold,
       });
-      return okResponse({ contexts }, startTime);
+      return okResponse(result, startTime);
     } catch (err) {
       throw toHttpException(err, startTime);
     }
@@ -47,16 +47,18 @@ export class SearchController {
   @ApiOperation({ summary: 'Hierarchical semantic search with session context' })
   async search(
     @Body() dto: SearchRequestDto,
-  ): Promise<ApiResponse<{ contexts: MatchedContextResponse[] }>> {
+  ): Promise<ApiResponse<FindResult>> {
     const startTime = Date.now();
     try {
-      const contexts = await this.searchService.find({
+      const result = await this.searchService.search({
         query: dto.query,
-        targetDirectories: dto.target_uri ? [dto.target_uri] : undefined,
+        targetUri: dto.target_uri,
+        sessionId: dto.session_id,
         limit: dto.node_limit ?? dto.limit ?? 10,
         scoreThreshold: dto.score_threshold,
+        filter: dto.filter,
       });
-      return okResponse({ contexts }, startTime);
+      return okResponse(result, startTime);
     } catch (err) {
       throw toHttpException(err, startTime);
     }

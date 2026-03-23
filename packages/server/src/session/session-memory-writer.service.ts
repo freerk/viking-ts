@@ -13,6 +13,8 @@ const CATEGORY_PATH: Record<MemoryCategory, string> = {
   events: 'memories/events',
   cases: 'memories/cases',
   patterns: 'memories/patterns',
+  tools: 'memories/tools',
+  skills: 'memories/skills',
 };
 
 /** Categories that live under the user space. */

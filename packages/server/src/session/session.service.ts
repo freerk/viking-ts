@@ -249,6 +249,31 @@ export class SessionService {
     return rows;
   }
 
+  /**
+   * Get session context for search: recent messages as plain text pairs.
+   * Returns empty summaries (archive summary retrieval is P1).
+   */
+  async getContextForSearch(
+    sessionId: string,
+  ): Promise<{ summaries: string[]; recentMessages: Array<{ role: string; content: string }> }> {
+    await this.get(sessionId);
+
+    const messages = this.getMessages(sessionId);
+    const recentMessages = messages.map((m) => {
+      const parts: MessagePart[] = JSON.parse(m.content) as MessagePart[];
+      const text = parts
+        .filter((p): p is MessagePart & { text: string } => p.type === 'text' && typeof p.text === 'string')
+        .map((p) => p.text)
+        .join('\n');
+      return { role: m.role, content: text };
+    });
+
+    return {
+      summaries: [],
+      recentMessages,
+    };
+  }
+
   private runCommitInBackground(sessionId: string, taskId: string): void {
     this.taskTracker.start(taskId);
 

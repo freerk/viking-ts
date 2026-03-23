@@ -1,62 +1,43 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { LlmService } from '../llm/llm.service';
+import { LlmService, CandidateMemory } from '../llm/llm.service';
 
-export type MemoryCategory =
-  | 'profile'
-  | 'preferences'
-  | 'entities'
-  | 'events'
-  | 'cases'
-  | 'patterns';
+// Re-export types so existing consumers keep working
+export type { CandidateMemory, MemoryCategory } from '../llm/llm.service';
 
-const VALID_CATEGORIES = new Set<MemoryCategory>([
-  'profile',
-  'preferences',
-  'entities',
-  'events',
-  'cases',
-  'patterns',
-]);
-
-export interface CandidateMemory {
-  category: MemoryCategory;
-  abstract: string;
-  overview: string;
-  content: string;
-  language: string;
-}
-
-const EXTRACTION_SYSTEM_PROMPT = `You extract structured memories from conversations. Return only valid JSON. No markdown fences, no explanation.`;
-
-function buildExtractionPrompt(
-  messages: string,
+/**
+ * Detect the dominant language from a set of messages.
+ * Counts CJK characters vs Latin; returns 'zh' for Chinese-dominant,
+ * 'en' for English-dominant, 'auto' when uncertain.
+ */
+function detectOutputLanguage(
+  messages: ReadonlyArray<{ role: string; content: string }>,
 ): string {
-  return `Extract key memories from this conversation. Return JSON:
-{
-  "memories": [
-    {
-      "category": "profile|preferences|entities|events|cases|patterns",
-      "abstract": "one sentence summary (max 256 chars)",
-      "overview": "medium detail markdown",
-      "content": "full narrative markdown"
+  let cjkChars = 0;
+  let latinChars = 0;
+
+  for (const m of messages) {
+    for (const ch of m.content) {
+      const code = ch.codePointAt(0) ?? 0;
+      if (
+        (code >= 0x4e00 && code <= 0x9fff) ||
+        (code >= 0x3400 && code <= 0x4dbf) ||
+        (code >= 0xf900 && code <= 0xfaff)
+      ) {
+        cjkChars++;
+      } else if (
+        (code >= 0x41 && code <= 0x5a) ||
+        (code >= 0x61 && code <= 0x7a)
+      ) {
+        latinChars++;
+      }
     }
-  ]
-}
+  }
 
-Category guide:
-- profile: user identity, background, persistent facts about the user
-- preferences: user preferences and settings by topic
-- entities: projects, people, concepts the user cares about
-- events: decisions, milestones, key moments
-- cases: specific problems solved (agent-level)
-- patterns: reusable processes/methods (agent-level)
-
-Only extract genuinely important information. Return {"memories": []} if nothing is worth remembering.
-
-Conversation:
-<user_content>
-${messages}
-</user_content>`;
+  const total = cjkChars + latinChars;
+  if (total === 0) return 'auto';
+  if (cjkChars / total > 0.3) return 'zh';
+  if (latinChars / total > 0.7) return 'en';
+  return 'auto';
 }
 
 @Injectable()
@@ -67,90 +48,28 @@ export class SessionExtractorService {
 
   async extract(
     messages: ReadonlyArray<{ role: string; content: string }>,
+    user?: string,
   ): Promise<CandidateMemory[]> {
     if (messages.length === 0) {
       return [];
     }
 
-    const formatted = messages
-      .map((m) => `[${m.role}]: ${m.content}`)
-      .join('\n');
-
-    if (!formatted.trim()) {
+    const hasContent = messages.some((m) => m.content.trim().length > 0);
+    if (!hasContent) {
       return [];
     }
 
-    const prompt = buildExtractionPrompt(formatted);
+    const outputLanguage = detectOutputLanguage(messages);
 
     try {
-      const response = await this.llm.complete(
-        EXTRACTION_SYSTEM_PROMPT,
-        prompt,
-        2048,
+      return await this.llm.extractMemoriesFromSession(
+        user ?? 'default',
+        messages,
+        outputLanguage,
       );
-
-      return this.parseResponse(response);
     } catch (err) {
       this.logger.error(`Memory extraction failed: ${String(err)}`);
       return [];
     }
-  }
-
-  private parseResponse(raw: string): CandidateMemory[] {
-    const cleaned = raw
-      .replace(/```json?\n?/g, '')
-      .replace(/```/g, '')
-      .trim();
-
-    let data: unknown;
-    try {
-      data = JSON.parse(cleaned);
-    } catch {
-      this.logger.warn('Failed to parse LLM memory extraction response');
-      return [];
-    }
-
-    if (Array.isArray(data)) {
-      data = { memories: data };
-    }
-
-    if (typeof data !== 'object' || data === null) {
-      return [];
-    }
-
-    const obj = data as Record<string, unknown>;
-    const memories = obj['memories'];
-    if (!Array.isArray(memories)) {
-      return [];
-    }
-
-    const candidates: CandidateMemory[] = [];
-
-    for (const mem of memories) {
-      if (typeof mem !== 'object' || mem === null) continue;
-
-      const entry = mem as Record<string, unknown>;
-      const categoryRaw = String(entry['category'] ?? 'patterns');
-      const category: MemoryCategory = VALID_CATEGORIES.has(categoryRaw as MemoryCategory)
-        ? (categoryRaw as MemoryCategory)
-        : 'patterns';
-
-      const abstract = String(entry['abstract'] ?? '').slice(0, 256);
-      const overview = String(entry['overview'] ?? '');
-      const content = String(entry['content'] ?? '');
-
-      if (!abstract && !content) continue;
-
-      candidates.push({
-        category,
-        abstract,
-        overview,
-        content,
-        language: 'auto',
-      });
-    }
-
-    this.logger.log(`Extracted ${candidates.length} candidate memories`);
-    return candidates;
   }
 }

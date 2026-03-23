@@ -2,6 +2,70 @@ import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { generateText, LanguageModel } from 'ai';
 import { getLanguageModel, LlmProvider } from './providers';
+import {
+  fileSummaryPrompt,
+  documentSummaryPrompt,
+  overviewGenerationPrompt,
+  memoryExtractionPrompt,
+  memoryMergePrompt,
+  dedupDecisionPrompt,
+  intentAnalysisPrompt,
+} from './prompts';
+
+const DOCUMENT_EXTENSIONS = new Set(['.md', '.txt', '.rst', '.adoc', '.tex']);
+
+const VALID_MEMORY_CATEGORIES = new Set([
+  'profile',
+  'preferences',
+  'entities',
+  'events',
+  'cases',
+  'patterns',
+  'tools',
+  'skills',
+]);
+
+export type MemoryCategory =
+  | 'profile'
+  | 'preferences'
+  | 'entities'
+  | 'events'
+  | 'cases'
+  | 'patterns'
+  | 'tools'
+  | 'skills';
+
+export interface CandidateMemory {
+  category: MemoryCategory;
+  abstract: string;
+  overview: string;
+  content: string;
+}
+
+export interface DedupAction {
+  uri: string;
+  action: 'merge' | 'delete';
+  reason: string;
+}
+
+export interface DedupDecision {
+  decision: 'skip' | 'create' | 'none';
+  reason: string;
+  list: DedupAction[];
+}
+
+export interface TypedQuery {
+  query: string;
+  contextType: 'memory' | 'resource' | 'skill' | null;
+  intent: string;
+  priority: number;
+  targetDirectories: string[];
+}
+
+export interface QueryPlan {
+  reasoning: string;
+  queries: TypedQuery[];
+}
 
 @Injectable()
 export class LlmService implements OnModuleInit {
@@ -58,38 +122,69 @@ export class LlmService implements OnModuleInit {
     );
   }
 
+  /**
+   * Summarize a file using the correct prompt based on extension.
+   * Documents (.md, .txt, .rst) use documentSummaryPrompt; others use fileSummaryPrompt.
+   */
   async summarizeFile(fileName: string, content: string): Promise<string> {
     const capped = content.slice(0, 30_000);
+    const dotIndex = fileName.lastIndexOf('.');
+    const ext = dotIndex >= 0 ? fileName.slice(dotIndex).toLowerCase() : '';
+    const isDocument = DOCUMENT_EXTENSIONS.has(ext);
+
+    const prompt = isDocument
+      ? documentSummaryPrompt(fileName, capped)
+      : fileSummaryPrompt(fileName, capped);
+
     return this.complete(
-      'Summarize this file in 2-3 sentences. Return only the summary, no prefix.',
-      `File: ${fileName}\n\n${capped}`,
-      200,
+      'You are a file analysis expert. Follow the instructions in the user message exactly.',
+      prompt,
+      512,
     );
   }
 
+  /**
+   * Generate directory overview with numbered file references.
+   * Post-processes [N] refs back to actual filenames.
+   */
   async generateDirectoryOverview(
     dirName: string,
     fileSummaries: ReadonlyArray<{ name: string; summary: string }>,
     childAbstracts: ReadonlyArray<{ name: string; abstract: string }>,
   ): Promise<string> {
+    const fileIndexMap = new Map<number, string>();
     const filePart = fileSummaries
-      .map((f) => `- ${f.name}: ${f.summary}`)
+      .map((f, i) => {
+        const num = i + 1;
+        fileIndexMap.set(num, f.name);
+        return `- [${num}] ${f.name}: ${f.summary}`;
+      })
       .join('\n');
+
     const childPart = childAbstracts
-      .map((c) => `- ${c.name}: ${c.abstract}`)
+      .map((c) => `- ${c.name}/: ${c.abstract}`)
       .join('\n');
 
-    const userContent = [
-      `Generate a concise overview of this directory '${dirName}'.`,
-      filePart ? `\nFiles:\n${filePart}` : '',
-      childPart ? `\nSubdirectories:\n${childPart}` : '',
-    ].join('');
-
-    return this.complete(
-      'Generate a concise directory overview. Include key themes and contents. Max 4000 characters. Return only the overview.',
-      userContent.slice(0, 60_000),
-      1024,
+    const prompt = overviewGenerationPrompt(
+      dirName,
+      filePart || '(none)',
+      childPart || '(none)',
     );
+
+    let result = await this.complete(
+      'You are a documentation expert. Follow the instructions in the user message exactly.',
+      prompt.slice(0, 60_000),
+      2048,
+    );
+
+    // Post-process: replace [N] refs with actual filenames
+    result = result.replace(/\[(\d+)\]/g, (_match, numStr: string) => {
+      const num = parseInt(numStr, 10);
+      const name = fileIndexMap.get(num);
+      return name ?? `[${numStr}]`;
+    });
+
+    return result;
   }
 
   extractAbstractFromOverview(overviewText: string): string {
@@ -103,6 +198,122 @@ export class LlmService implements OnModuleInit {
     return overviewText.slice(0, 256);
   }
 
+  /**
+   * Extract memories from session messages using the full OpenViking memory_extraction prompt.
+   */
+  async extractMemoriesFromSession(
+    user: string,
+    messages: ReadonlyArray<{ role: string; content: string }>,
+    outputLanguage?: string,
+  ): Promise<CandidateMemory[]> {
+    const formatted = messages
+      .map((m) => `[${m.role}]: ${m.content}`)
+      .join('\n');
+
+    if (!formatted.trim()) {
+      return [];
+    }
+
+    const prompt = memoryExtractionPrompt(
+      user,
+      formatted,
+      outputLanguage ?? 'auto',
+    );
+
+    try {
+      const response = await this.complete(
+        'You extract structured memories from conversations. Return only valid JSON. No markdown fences, no explanation.',
+        prompt,
+        4096,
+      );
+
+      return this.parseMemoryResponse(response);
+    } catch (err) {
+      this.logger.error(`Memory extraction failed: ${String(err)}`);
+      return [];
+    }
+  }
+
+  /**
+   * Merge existing memory content with new content.
+   */
+  async mergeMemory(
+    existingContent: string,
+    newContent: string,
+    category: string,
+    outputLanguage?: string,
+  ): Promise<string> {
+    const prompt = memoryMergePrompt(
+      existingContent,
+      newContent,
+      category,
+      outputLanguage ?? 'auto',
+    );
+
+    return this.complete(
+      'You merge memory content. Return only the merged content, no explanation.',
+      prompt,
+      2048,
+    );
+  }
+
+  /**
+   * Decide how to handle a candidate memory vs existing similar memories.
+   */
+  async decideDeduplicate(
+    candidate: { abstract: string; overview: string; content: string },
+    existingMemories: ReadonlyArray<{ uri: string; abstract: string; overview: string; content: string }>,
+  ): Promise<DedupDecision> {
+    const existingFormatted = existingMemories
+      .map((m) => `- URI: ${m.uri}\n  Abstract: ${m.abstract}\n  Overview: ${m.overview}\n  Content: ${m.content}`)
+      .join('\n\n');
+
+    const prompt = dedupDecisionPrompt(
+      candidate.abstract,
+      candidate.overview,
+      candidate.content,
+      existingFormatted || '(none)',
+    );
+
+    const response = await this.complete(
+      'You make memory deduplication decisions. Return only valid JSON. No markdown fences, no explanation.',
+      prompt,
+      1024,
+    );
+
+    return this.parseDedupResponse(response);
+  }
+
+  /**
+   * Analyze intent from session context to generate a query plan.
+   */
+  async analyzeIntent(
+    recentMessages: string,
+    currentMessage: string,
+    compressionSummary?: string,
+    contextType?: string,
+    targetAbstract?: string,
+  ): Promise<QueryPlan> {
+    const prompt = intentAnalysisPrompt(
+      recentMessages,
+      currentMessage,
+      compressionSummary,
+      contextType,
+      targetAbstract,
+    );
+
+    const response = await this.complete(
+      'You are a context query planner. Return only valid JSON. No markdown fences, no explanation.',
+      prompt,
+      2048,
+    );
+
+    return this.parseQueryPlanResponse(response);
+  }
+
+  /**
+   * Legacy extractMemories for backward compatibility.
+   */
   async extractMemories(
     messages: Array<{ role: string; content: string }>,
   ): Promise<Array<{ text: string; category: string }>> {
@@ -147,5 +358,153 @@ ${conversationText}
       this.logger.warn('Failed to parse LLM memory extraction response');
       return [];
     }
+  }
+
+  private parseMemoryResponse(raw: string): CandidateMemory[] {
+    const cleaned = raw
+      .replace(/```json?\n?/g, '')
+      .replace(/```/g, '')
+      .trim();
+
+    let data: unknown;
+    try {
+      data = JSON.parse(cleaned);
+    } catch {
+      this.logger.warn('Failed to parse LLM memory extraction response');
+      return [];
+    }
+
+    if (Array.isArray(data)) {
+      data = { memories: data };
+    }
+
+    if (typeof data !== 'object' || data === null) {
+      return [];
+    }
+
+    const obj = data as Record<string, unknown>;
+    const memories = obj['memories'];
+    if (!Array.isArray(memories)) {
+      return [];
+    }
+
+    const candidates: CandidateMemory[] = [];
+
+    for (const mem of memories) {
+      if (typeof mem !== 'object' || mem === null) continue;
+
+      const entry = mem as Record<string, unknown>;
+      const categoryRaw = String(entry['category'] ?? 'patterns');
+      const category: MemoryCategory = VALID_MEMORY_CATEGORIES.has(categoryRaw)
+        ? (categoryRaw as MemoryCategory)
+        : 'patterns';
+
+      const abstract = String(entry['abstract'] ?? '').slice(0, 256);
+      const overview = String(entry['overview'] ?? '');
+      const content = String(entry['content'] ?? '');
+
+      if (!abstract && !content) continue;
+
+      candidates.push({ category, abstract, overview, content });
+    }
+
+    this.logger.log(`Extracted ${candidates.length} candidate memories`);
+    return candidates;
+  }
+
+  private parseDedupResponse(raw: string): DedupDecision {
+    const cleaned = raw
+      .replace(/```json?\n?/g, '')
+      .replace(/```/g, '')
+      .trim();
+
+    let data: unknown;
+    try {
+      data = JSON.parse(cleaned);
+    } catch {
+      this.logger.warn('Failed to parse dedup decision response');
+      return { decision: 'skip', reason: 'Failed to parse LLM response', list: [] };
+    }
+
+    if (typeof data !== 'object' || data === null) {
+      return { decision: 'skip', reason: 'Invalid response shape', list: [] };
+    }
+
+    const obj = data as Record<string, unknown>;
+    const decisionRaw = String(obj['decision'] ?? 'skip');
+    const validDecisions = new Set(['skip', 'create', 'none']);
+    const decision = validDecisions.has(decisionRaw)
+      ? (decisionRaw as 'skip' | 'create' | 'none')
+      : 'skip';
+
+    const reason = String(obj['reason'] ?? '');
+    const rawList = obj['list'];
+    const list: DedupAction[] = [];
+
+    if (Array.isArray(rawList)) {
+      for (const item of rawList) {
+        if (typeof item !== 'object' || item === null) continue;
+        const entry = item as Record<string, unknown>;
+        const uri = String(entry['uri'] ?? '');
+        const actionRaw = String(entry['decide'] ?? '');
+        if (!uri || (actionRaw !== 'merge' && actionRaw !== 'delete')) continue;
+        list.push({
+          uri,
+          action: actionRaw,
+          reason: String(entry['reason'] ?? ''),
+        });
+      }
+    }
+
+    return { decision, reason, list };
+  }
+
+  private parseQueryPlanResponse(raw: string): QueryPlan {
+    const cleaned = raw
+      .replace(/```json?\n?/g, '')
+      .replace(/```/g, '')
+      .trim();
+
+    let data: unknown;
+    try {
+      data = JSON.parse(cleaned);
+    } catch {
+      this.logger.warn('Failed to parse intent analysis response');
+      return { reasoning: 'Failed to parse LLM response', queries: [] };
+    }
+
+    if (typeof data !== 'object' || data === null) {
+      return { reasoning: 'Invalid response shape', queries: [] };
+    }
+
+    const obj = data as Record<string, unknown>;
+    const reasoning = String(obj['reasoning'] ?? '');
+    const rawQueries = obj['queries'];
+    const queries: TypedQuery[] = [];
+
+    if (Array.isArray(rawQueries)) {
+      for (const q of rawQueries) {
+        if (typeof q !== 'object' || q === null) continue;
+        const entry = q as Record<string, unknown>;
+        const query = String(entry['query'] ?? '');
+        if (!query) continue;
+
+        const ctRaw = String(entry['context_type'] ?? '');
+        const validTypes = new Set(['memory', 'resource', 'skill']);
+        const contextType = validTypes.has(ctRaw)
+          ? (ctRaw as 'memory' | 'resource' | 'skill')
+          : null;
+
+        queries.push({
+          query,
+          contextType,
+          intent: String(entry['intent'] ?? ''),
+          priority: typeof entry['priority'] === 'number' ? entry['priority'] : 3,
+          targetDirectories: [],
+        });
+      }
+    }
+
+    return { reasoning, queries };
   }
 }

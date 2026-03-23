@@ -167,6 +167,13 @@ export interface MatchedContextResponse {
   updated_at: string;
 }
 
+export interface FindResult {
+  memories: MatchedContextResponse[];
+  resources: MatchedContextResponse[];
+  skills: MatchedContextResponse[];
+  total: number;
+}
+
 export interface GrepMatch {
   uri: string;
   line_number: number;

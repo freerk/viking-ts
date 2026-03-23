@@ -149,6 +149,22 @@ Context vector IDs are deterministic: `MD5("{accountId}:{uri}")`. This enables i
 
 Cosine similarity is computed in TypeScript (not SQL). Rows are filtered by contextType/parentUriPrefix in SQL, then embeddings are deserialized and scored in-process. Default score threshold is 0.0.
 
+### LLM prompts (packages/server/src/llm/prompts.ts)
+
+All LLM prompts are verbatim copies from OpenViking's YAML templates in `openviking/prompts/templates/`.
+Seven prompt functions: `fileSummaryPrompt`, `documentSummaryPrompt`, `overviewGenerationPrompt`,
+`memoryExtractionPrompt`, `memoryMergePrompt`, `dedupDecisionPrompt`, `intentAnalysisPrompt`.
+
+### Search / IntentAnalyzer
+
+- `POST /search/find` and `POST /search/search` return `FindResult`: `{memories[], resources[], skills[], total}`
+- `search` with `session_id` runs `IntentAnalyzerService` to produce a multi-type `QueryPlan`
+- `IntentAnalyzerService` (packages/server/src/search/intent-analyzer.service.ts) ports OpenViking's `IntentAnalyzer`
+
+### Memory extraction categories
+
+8 categories: profile, preferences, entities, events, cases, patterns, tools, skills.
+
 ### Legacy files (not imported, safe to remove later)
 
 - `src/storage/database/` - TypeORM entities, migrations, postgres services

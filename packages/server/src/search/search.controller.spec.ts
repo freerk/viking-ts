@@ -3,7 +3,7 @@ import { INestApplication, ValidationPipe } from '@nestjs/common';
 import request from 'supertest';
 import { SearchController } from './search.controller';
 import { SearchService } from './search.service';
-import { MatchedContextResponse, GrepMatch } from './search.dto';
+import { MatchedContextResponse, FindResult, GrepMatch } from './search.dto';
 
 function makeMatchedContext(
   overrides?: Partial<MatchedContextResponse>,
@@ -25,6 +25,33 @@ function makeMatchedContext(
   };
 }
 
+function makeFindResult(contexts: MatchedContextResponse[] = []): FindResult {
+  const memories: MatchedContextResponse[] = [];
+  const resources: MatchedContextResponse[] = [];
+  const skills: MatchedContextResponse[] = [];
+
+  for (const ctx of contexts) {
+    switch (ctx.context_type) {
+      case 'memory':
+        memories.push(ctx);
+        break;
+      case 'skill':
+        skills.push(ctx);
+        break;
+      default:
+        resources.push(ctx);
+        break;
+    }
+  }
+
+  return {
+    memories,
+    resources,
+    skills,
+    total: memories.length + resources.length + skills.length,
+  };
+}
+
 function makeGrepMatch(overrides?: Partial<GrepMatch>): GrepMatch {
   return {
     uri: 'viking://resources/test.md',
@@ -40,6 +67,7 @@ describe('SearchController', () => {
   let app: INestApplication;
   const mockService = {
     find: jest.fn(),
+    search: jest.fn(),
     grep: jest.fn(),
     glob: jest.fn(),
   };
@@ -70,9 +98,9 @@ describe('SearchController', () => {
   });
 
   describe('POST /api/v1/search/find', () => {
-    it('should return 200 with contexts array', async () => {
-      const contexts = [makeMatchedContext()];
-      mockService.find.mockResolvedValue(contexts);
+    it('should return 201 with memories/resources/skills shape', async () => {
+      const findResult = makeFindResult([makeMatchedContext()]);
+      mockService.find.mockResolvedValue(findResult);
 
       const res = await request(app.getHttpServer())
         .post('/api/v1/search/find')
@@ -80,16 +108,37 @@ describe('SearchController', () => {
         .expect(201);
 
       expect(res.body.status).toBe('ok');
-      expect(res.body.result.contexts).toHaveLength(1);
-      expect(res.body.result.contexts[0].uri).toBe(
+      expect(res.body.result.memories).toHaveLength(1);
+      expect(res.body.result.resources).toHaveLength(0);
+      expect(res.body.result.skills).toHaveLength(0);
+      expect(res.body.result.total).toBe(1);
+      expect(res.body.result.memories[0].uri).toBe(
         'viking://user/default/memories/test.md',
       );
-      expect(res.body.result.contexts[0].score).toBe(0.85);
       expect(res.body.time).toBeDefined();
     });
 
+    it('should return mixed types in separate arrays', async () => {
+      const findResult = makeFindResult([
+        makeMatchedContext({ context_type: 'memory', uri: 'viking://user/default/memories/m.md' }),
+        makeMatchedContext({ context_type: 'resource', uri: 'viking://resources/r.md' }),
+        makeMatchedContext({ context_type: 'skill', uri: 'viking://agent/default/skills/s.md' }),
+      ]);
+      mockService.find.mockResolvedValue(findResult);
+
+      const res = await request(app.getHttpServer())
+        .post('/api/v1/search/find')
+        .send({ query: 'test search' })
+        .expect(201);
+
+      expect(res.body.result.memories).toHaveLength(1);
+      expect(res.body.result.resources).toHaveLength(1);
+      expect(res.body.result.skills).toHaveLength(1);
+      expect(res.body.result.total).toBe(3);
+    });
+
     it('should pass options through to service', async () => {
-      mockService.find.mockResolvedValue([]);
+      mockService.find.mockResolvedValue(makeFindResult());
 
       await request(app.getHttpServer())
         .post('/api/v1/search/find')
@@ -125,8 +174,9 @@ describe('SearchController', () => {
   });
 
   describe('POST /api/v1/search/search', () => {
-    it('should return contexts with session support', async () => {
-      mockService.find.mockResolvedValue([makeMatchedContext()]);
+    it('should return FindResult shape with session support', async () => {
+      const findResult = makeFindResult([makeMatchedContext()]);
+      mockService.search.mockResolvedValue(findResult);
 
       const res = await request(app.getHttpServer())
         .post('/api/v1/search/search')
@@ -134,7 +184,29 @@ describe('SearchController', () => {
         .expect(201);
 
       expect(res.body.status).toBe('ok');
-      expect(res.body.result.contexts).toHaveLength(1);
+      expect(res.body.result.memories).toHaveLength(1);
+      expect(res.body.result.total).toBe(1);
+
+      expect(mockService.search).toHaveBeenCalledWith(
+        expect.objectContaining({
+          query: 'test',
+          sessionId: 'sess-1',
+        }),
+      );
+    });
+
+    it('should work without session_id', async () => {
+      mockService.search.mockResolvedValue(makeFindResult());
+
+      const res = await request(app.getHttpServer())
+        .post('/api/v1/search/search')
+        .send({ query: 'test' })
+        .expect(201);
+
+      expect(res.body.status).toBe('ok');
+      expect(res.body.result.memories).toHaveLength(0);
+      expect(res.body.result.resources).toHaveLength(0);
+      expect(res.body.result.skills).toHaveLength(0);
     });
   });
 
