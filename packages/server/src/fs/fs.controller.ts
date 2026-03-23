@@ -32,13 +32,14 @@ export class FsController {
   async ls(@Query() query: LsQueryDto): Promise<ApiResponse<VfsEntry[]>> {
     const startTime = Date.now();
     try {
+      const nodeLimit = query.limit ?? query.node_limit;
       const entries = await this.vfs.ls(query.uri, {
         simple: query.simple,
         recursive: query.recursive,
         output: query.output,
         absLimit: query.abs_limit,
         showAllHidden: query.show_all_hidden,
-        nodeLimit: query.node_limit,
+        nodeLimit,
       });
       return okResponse(entries, startTime);
     } catch (err) {
@@ -51,11 +52,12 @@ export class FsController {
   async tree(@Query() query: TreeQueryDto): Promise<ApiResponse<TreeNode>> {
     const startTime = Date.now();
     try {
+      const nodeLimit = query.limit ?? query.node_limit;
       const tree = await this.vfs.tree(query.uri, {
         output: query.output,
         absLimit: query.abs_limit,
         showAllHidden: query.show_all_hidden,
-        nodeLimit: query.node_limit,
+        nodeLimit,
         levelLimit: query.level_limit,
       });
       return okResponse(tree, startTime);

@@ -59,6 +59,11 @@ export class LsQueryDto {
   @IsOptional()
   @Type(() => Number)
   node_limit?: number;
+
+  @ApiPropertyOptional({ description: 'Alias for node_limit' })
+  @IsOptional()
+  @Type(() => Number)
+  limit?: number;
 }
 
 export class TreeQueryDto {
@@ -92,6 +97,11 @@ export class TreeQueryDto {
   @IsOptional()
   @Type(() => Number)
   level_limit?: number;
+
+  @ApiPropertyOptional({ description: 'Alias for node_limit' })
+  @IsOptional()
+  @Type(() => Number)
+  limit?: number;
 }
 
 export class StatQueryDto {
