@@ -187,7 +187,8 @@ export class MemoryService {
   }): Promise<MemoryRecord[]> {
     let ownerSpace: string | undefined;
     if (filters.agentId) {
-      ownerSpace = filters.agentId;
+      // Must use the computed agent space hash, same as createMemory
+      ownerSpace = this.computeAgentSpace(filters.userId, filters.agentId);
     } else if (filters.userId) {
       ownerSpace = filters.userId;
     }
