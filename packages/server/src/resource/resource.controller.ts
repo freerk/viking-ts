@@ -17,23 +17,12 @@ import { join } from 'path';
 import { mkdirSync, existsSync, writeFileSync, unlinkSync, readdirSync, statSync } from 'fs';
 import { randomUUID } from 'crypto';
 import { ResourceService } from './resource.service';
-import { CreateResourceDto, SearchResourcesQueryDto } from './resource.dto';
+import { AddResourceDto, CreateResourceDto, SearchResourcesQueryDto } from './resource.dto';
 import { okResponse } from '../shared/api-response.helper';
 import { ApiResponse, ResourceRecord, SearchResult } from '../shared/types';
 import { VfsService } from '../storage/vfs.service';
 import { EmbeddingQueueService } from '../queue/embedding-queue.service';
 import { SemanticQueueService } from '../queue/semantic-queue.service';
-
-interface AddResourceBody {
-  path?: string;
-  temp_path?: string;
-  to?: string;
-  parent?: string;
-  reason?: string;
-  instruction?: string;
-  wait?: boolean;
-  timeout?: number;
-}
 
 interface AddSkillBody {
   data?: unknown;
@@ -88,66 +77,45 @@ export class ResourceController {
   @Post('resources')
   @ApiOperation({ summary: 'Add resource to Viking (OpenViking-compatible)' })
   async addResource(
-    @Body() body: AddResourceBody,
+    @Body() body: AddResourceDto,
   ): Promise<ApiResponse<unknown>> {
-    if (!body.path && !body.temp_path) {
-      throw new BadRequestException("Either 'path' or 'temp_path' must be provided");
-    }
-    if (body.to && body.parent) {
-      throw new BadRequestException("Cannot specify both 'to' and 'parent'");
-    }
+    const isLegacy = !body.path && !body.to && !body.parent && body.text && (body.title || body.uri);
 
-    const sourcePath = body.temp_path ?? body.path;
-    if (!sourcePath) {
-      throw new BadRequestException("Either 'path' or 'temp_path' must be provided");
-    }
-
-    let content: string;
-    try {
-      const { readFileSync: readFs } = await import('fs');
-      content = readFs(sourcePath, 'utf-8');
-    } catch {
-      throw new BadRequestException(`Cannot read file: ${sourcePath}`);
+    if (isLegacy) {
+      const result = await this.resourceService.addResource({
+        text: body.text,
+        to: body.uri,
+        title: body.title,
+      });
+      return okResponse({
+        status: result.status,
+        root_uri: result.root_uri,
+        source_path: result.source_path,
+        errors: result.errors,
+      });
     }
 
-    const fileName = sourcePath.split('/').pop() ?? 'resource.md';
-    let targetUri: string;
-
-    if (body.to) {
-      targetUri = body.to;
-    } else if (body.parent) {
-      targetUri = `${body.parent}/${fileName}`;
-    } else {
-      targetUri = `viking://resources/${fileName}`;
+    if (!body.path && !body.text) {
+      throw new BadRequestException("Either 'path' or 'text' must be provided");
     }
 
-    await this.vfs.writeFile(targetUri, content);
-
-    const parentUri = targetUri.substring(0, targetUri.lastIndexOf('/'));
-    const abstract = content.slice(0, 256);
-
-    this.embeddingQueue.enqueue({
-      uri: targetUri,
-      text: content,
-      contextType: 'resource',
-      level: 2,
-      abstract,
-      name: fileName,
-      parentUri,
-      accountId: 'default',
-      ownerSpace: '',
-    });
-
-    this.semanticQueue.enqueue({
-      uri: parentUri,
-      contextType: 'resource',
-      accountId: 'default',
-      ownerSpace: '',
+    const result = await this.resourceService.addResource({
+      path: body.path,
+      text: body.text,
+      to: body.to,
+      parent: body.parent,
+      reason: body.reason,
+      instruction: body.instruction,
+      wait: body.wait,
+      title: body.title,
+      uri: body.uri,
     });
 
     return okResponse({
-      uri: targetUri,
-      status: body.wait ? 'ok' : 'accepted',
+      status: result.status,
+      root_uri: result.root_uri,
+      source_path: result.source_path,
+      errors: result.errors,
     });
   }
 

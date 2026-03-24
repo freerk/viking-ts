@@ -485,9 +485,9 @@ async function ingestResources(dirs, resourcePrefix, baseUrl, dryRun, existing) 
 
       try {
         await post(baseUrl, '/api/v1/resources', {
-          title: `${dirName} > ${relPath.replace(/\//g, ' > ').replace('.md', '')}`,
           text: content,
-          uri,
+          to: uri,
+          reason: `resource from ${relPath}`,
         }, dryRun);
         console.log(`    + ${relPath}`);
         counters.resources.ingested++;

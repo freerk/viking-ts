@@ -1,5 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { INestApplication, ValidationPipe, NotFoundException } from '@nestjs/common';
+import { INestApplication, ValidationPipe, NotFoundException, BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import request from 'supertest';
 import { ResourceController } from '../src/resource/resource.controller';
@@ -33,6 +33,7 @@ describe('ResourceController (HTTP)', () => {
 
   beforeEach(async () => {
     resourceService = {
+      addResource: jest.fn(),
       createResource: jest.fn(),
       searchResources: jest.fn(),
       listResources: jest.fn(),
@@ -82,6 +83,10 @@ describe('ResourceController (HTTP)', () => {
     });
 
     it('should return 400 when both to and parent provided', async () => {
+      resourceService.addResource!.mockRejectedValue(
+        new BadRequestException("Cannot specify both 'to' and 'parent'"),
+      );
+
       await request(app.getHttpServer())
         .post('/api/v1/resources')
         .send({ path: '/tmp/test.md', to: 'viking://resources/a.md', parent: 'viking://resources' })
