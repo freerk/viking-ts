@@ -30,8 +30,13 @@ interface RerankConfig {
   threshold: number;
 }
 
-interface VikingConfig {
-  server: { host: string; port: number };
+export interface VikingConfig {
+  server: {
+    host: string;
+    port: number;
+    rootApiKey: string;
+    corsOrigins: string[];
+  };
   storage: {
     path: string;
     backend: StorageBackend;
@@ -43,12 +48,19 @@ interface VikingConfig {
     apiKey: string;
     apiBase: string;
     dimension: number;
+    input: string;
+    batchSize: number;
+    maxConcurrent: number;
   };
-  llm: {
+  vlm: {
     provider: string;
     model: string;
     apiKey: string;
     apiBase: string;
+    thinking: boolean;
+    maxConcurrent: number;
+    extraHeaders: Record<string, string>;
+    stream: boolean;
   };
   semantic: SemanticConfig;
   rerank: RerankConfig;
@@ -63,11 +75,128 @@ function resolveStoragePath(raw: string): string {
   return raw;
 }
 
+function parseBoolEnv(value: string | undefined, fallback: boolean): boolean {
+  if (value === undefined) return fallback;
+  return value === 'true' || value === '1';
+}
+
+function parseCorsOrigins(raw: string | undefined, fallback: string[]): string[] {
+  if (!raw) return fallback;
+  return raw.split(',').map((s) => s.trim()).filter(Boolean);
+}
+
+function parseExtraHeaders(raw: string | undefined, fallback: Record<string, string>): Record<string, string> {
+  if (!raw) return fallback;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+      return parsed as Record<string, string>;
+    }
+    return fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+/**
+ * Resolve config file path. Check in order:
+ * 1. OPENVIKING_CONFIG_FILE env var
+ * 2. VIKING_TS_CONFIG_FILE env var
+ * 3. ~/.viking-ts/config.json
+ * 4. ~/.openviking/ov.conf (OpenViking fallback)
+ */
+function resolveConfigFilePath(): string | undefined {
+  const envOpenViking = process.env['OPENVIKING_CONFIG_FILE'];
+  if (envOpenViking && existsSync(envOpenViking)) return envOpenViking;
+
+  const envVikingTs = process.env['VIKING_TS_CONFIG_FILE'];
+  if (envVikingTs && existsSync(envVikingTs)) return envVikingTs;
+
+  const defaultPath = join(homedir(), '.viking-ts', 'config.json');
+  if (existsSync(defaultPath)) return defaultPath;
+
+  const ovPath = join(homedir(), '.openviking', 'ov.conf');
+  if (existsSync(ovPath)) return ovPath;
+
+  return undefined;
+}
+
+/**
+ * Read embedding config from file, supporting both flat and nested `dense` shapes.
+ * Also supports snake_case `api_key` from OpenViking configs.
+ */
+function resolveEmbeddingFromFile(
+  fileEmbedding: Record<string, unknown> | undefined,
+): Partial<VikingConfig['embedding']> {
+  if (!fileEmbedding) return {};
+
+  const dense = fileEmbedding['dense'] as Record<string, unknown> | undefined;
+  const source = dense ?? fileEmbedding;
+
+  return {
+    provider: asString(source['provider']),
+    model: asString(source['model']),
+    apiKey: asString(source['apiKey'] ?? source['api_key']),
+    apiBase: asString(source['apiBase'] ?? source['api_base']),
+    dimension: asNumber(source['dimension']),
+    input: asString(source['input']),
+    batchSize: asNumber(source['batchSize'] ?? source['batch_size']),
+    maxConcurrent: asNumber(source['maxConcurrent'] ?? source['max_concurrent']),
+  };
+}
+
+/**
+ * Read VLM config from file, supporting both `vlm` and legacy `llm` keys.
+ * Also supports snake_case keys from OpenViking configs.
+ */
+function resolveVlmFromFile(
+  fileConfig: Record<string, unknown>,
+): Partial<VikingConfig['vlm']> {
+  const vlmRaw = fileConfig['vlm'] as Record<string, unknown> | undefined;
+  const llmRaw = fileConfig['llm'] as Record<string, unknown> | undefined;
+  const source = vlmRaw ?? llmRaw;
+  if (!source) return {};
+
+  return {
+    provider: asString(source['provider']),
+    model: asString(source['model']),
+    apiKey: asString(source['apiKey'] ?? source['api_key']),
+    apiBase: asString(source['apiBase'] ?? source['api_base']),
+    thinking: asBool(source['thinking']),
+    maxConcurrent: asNumber(source['maxConcurrent'] ?? source['max_concurrent']),
+    extraHeaders: asHeaders(source['extraHeaders'] ?? source['extra_headers']),
+    stream: asBool(source['stream']),
+  };
+}
+
+function asString(v: unknown): string | undefined {
+  return typeof v === 'string' ? v : undefined;
+}
+
+function asNumber(v: unknown): number | undefined {
+  if (typeof v === 'number') return v;
+  return undefined;
+}
+
+function asBool(v: unknown): boolean | undefined {
+  if (typeof v === 'boolean') return v;
+  return undefined;
+}
+
+function asHeaders(v: unknown): Record<string, string> | undefined {
+  if (typeof v === 'object' && v !== null && !Array.isArray(v)) {
+    return v as Record<string, string>;
+  }
+  return undefined;
+}
+
 export function loadConfig(): VikingConfig {
   const defaults: VikingConfig = {
     server: {
       host: '127.0.0.1',
       port: 1934,
+      rootApiKey: '',
+      corsOrigins: ['*'],
     },
     storage: {
       path: '~/.viking-ts/data',
@@ -86,12 +215,19 @@ export function loadConfig(): VikingConfig {
       apiKey: '',
       apiBase: 'https://api.openai.com/v1',
       dimension: 1536,
+      input: 'text',
+      batchSize: 32,
+      maxConcurrent: 10,
     },
-    llm: {
+    vlm: {
       provider: 'openai',
       model: 'gpt-4o-mini',
       apiKey: '',
       apiBase: 'https://api.openai.com/v1',
+      thinking: false,
+      maxConcurrent: 100,
+      extraHeaders: {},
+      stream: false,
     },
     semantic: {
       maxFileContentChars: 30000,
@@ -112,145 +248,194 @@ export function loadConfig(): VikingConfig {
     defaultSearchLimit: 3,
   };
 
-  const configPath = join(homedir(), '.viking-ts', 'config.json');
-  let fileConfig: Partial<VikingConfig> = {};
+  const configPath = resolveConfigFilePath();
+  let fileConfig: Record<string, unknown> = {};
 
-  if (existsSync(configPath)) {
+  if (configPath) {
     try {
       const raw = readFileSync(configPath, 'utf-8');
-      fileConfig = JSON.parse(raw) as Partial<VikingConfig>;
+      fileConfig = JSON.parse(raw) as Record<string, unknown>;
     } catch {
       /* ignore malformed config */
     }
   }
 
+  const fileServer = fileConfig['server'] as Record<string, unknown> | undefined;
+  const fileStorage = fileConfig['storage'] as Record<string, unknown> | undefined;
+  const fileEmbedding = fileConfig['embedding'] as Record<string, unknown> | undefined;
+  const fileSemantic = fileConfig['semantic'] as Record<string, unknown> | undefined;
+  const fileRerank = fileConfig['rerank'] as Record<string, unknown> | undefined;
+
+  const embFromFile = resolveEmbeddingFromFile(fileEmbedding);
+  const vlmFromFile = resolveVlmFromFile(fileConfig);
+
+  // Storage: support `workspace` as alias for `path`
+  const fileStoragePath =
+    asString(fileStorage?.['workspace']) ??
+    asString(fileStorage?.['path']);
+
   const config: VikingConfig = {
     server: {
       host:
         process.env['HOST'] ??
-        fileConfig.server?.host ??
+        asString(fileServer?.['host']) ??
         defaults.server.host,
       port: parseInt(process.env['PORT'] ?? '', 10) ||
-        (fileConfig.server?.port ?? defaults.server.port),
+        (asNumber(fileServer?.['port']) ?? defaults.server.port),
+      rootApiKey:
+        process.env['ROOT_API_KEY'] ??
+        asString(fileServer?.['rootApiKey'] ?? fileServer?.['root_api_key']) ??
+        defaults.server.rootApiKey,
+      corsOrigins: parseCorsOrigins(
+        process.env['CORS_ORIGINS'],
+        (fileServer?.['corsOrigins'] ?? fileServer?.['cors_origins']) as string[] | undefined
+          ?? defaults.server.corsOrigins,
+      ),
     },
     storage: {
       path: resolveStoragePath(
-        process.env['STORAGE_PATH'] ??
-          fileConfig.storage?.path ??
+        process.env['STORAGE_WORKSPACE'] ??
+          process.env['STORAGE_PATH'] ??
+          fileStoragePath ??
           defaults.storage.path,
       ),
       backend: (process.env['STORAGE_BACKEND'] ??
-        fileConfig.storage?.backend ??
+        asString(fileStorage?.['backend']) ??
         defaults.storage.backend) as StorageBackend,
       postgres: {
         host:
           process.env['DB_HOST'] ??
-          fileConfig.storage?.postgres?.host ??
+          asString((fileStorage?.['postgres'] as Record<string, unknown> | undefined)?.['host']) ??
           defaults.storage.postgres.host,
         port:
           parseInt(process.env['DB_PORT'] ?? '', 10) ||
-          (fileConfig.storage?.postgres?.port ?? defaults.storage.postgres.port),
+          (asNumber((fileStorage?.['postgres'] as Record<string, unknown> | undefined)?.['port']) ?? defaults.storage.postgres.port),
         username:
           process.env['DB_USERNAME'] ??
-          fileConfig.storage?.postgres?.username ??
+          asString((fileStorage?.['postgres'] as Record<string, unknown> | undefined)?.['username']) ??
           defaults.storage.postgres.username,
         password:
           process.env['DB_PASSWORD'] ??
-          fileConfig.storage?.postgres?.password ??
+          asString((fileStorage?.['postgres'] as Record<string, unknown> | undefined)?.['password']) ??
           defaults.storage.postgres.password,
         database:
           process.env['DB_DATABASE'] ??
-          fileConfig.storage?.postgres?.database ??
+          asString((fileStorage?.['postgres'] as Record<string, unknown> | undefined)?.['database']) ??
           defaults.storage.postgres.database,
       },
     },
     embedding: {
       provider:
         process.env['EMBEDDING_PROVIDER'] ??
-        fileConfig.embedding?.provider ??
+        embFromFile.provider ??
         defaults.embedding.provider,
       model:
         process.env['EMBEDDING_MODEL'] ??
-        fileConfig.embedding?.model ??
+        embFromFile.model ??
         defaults.embedding.model,
       apiKey:
         process.env['EMBEDDING_API_KEY'] ??
-        fileConfig.embedding?.apiKey ??
+        embFromFile.apiKey ??
         defaults.embedding.apiKey,
       apiBase:
         process.env['EMBEDDING_API_BASE'] ??
-        fileConfig.embedding?.apiBase ??
+        embFromFile.apiBase ??
         defaults.embedding.apiBase,
       dimension:
         parseInt(process.env['EMBEDDING_DIMENSION'] ?? '', 10) ||
-        (fileConfig.embedding?.dimension ?? defaults.embedding.dimension),
+        (embFromFile.dimension ?? defaults.embedding.dimension),
+      input:
+        process.env['EMBEDDING_INPUT'] ??
+        embFromFile.input ??
+        defaults.embedding.input,
+      batchSize:
+        parseInt(process.env['EMBEDDING_BATCH_SIZE'] ?? '', 10) ||
+        (embFromFile.batchSize ?? defaults.embedding.batchSize),
+      maxConcurrent:
+        parseInt(process.env['EMBEDDING_MAX_CONCURRENT'] ?? '', 10) ||
+        (embFromFile.maxConcurrent ?? defaults.embedding.maxConcurrent),
     },
-    llm: {
+    vlm: {
       provider:
-        process.env['LLM_PROVIDER'] ??
-        fileConfig.llm?.provider ??
-        defaults.llm.provider,
+        process.env['VLM_PROVIDER'] ?? process.env['LLM_PROVIDER'] ??
+        vlmFromFile.provider ??
+        defaults.vlm.provider,
       model:
-        process.env['LLM_MODEL'] ??
-        fileConfig.llm?.model ??
-        defaults.llm.model,
+        process.env['VLM_MODEL'] ?? process.env['LLM_MODEL'] ??
+        vlmFromFile.model ??
+        defaults.vlm.model,
       apiKey:
-        process.env['LLM_API_KEY'] ??
-        fileConfig.llm?.apiKey ??
-        defaults.llm.apiKey,
+        process.env['VLM_API_KEY'] ?? process.env['LLM_API_KEY'] ??
+        vlmFromFile.apiKey ??
+        defaults.vlm.apiKey,
       apiBase:
-        process.env['LLM_API_BASE'] ??
-        fileConfig.llm?.apiBase ??
-        defaults.llm.apiBase,
+        process.env['VLM_API_BASE'] ?? process.env['LLM_API_BASE'] ??
+        vlmFromFile.apiBase ??
+        defaults.vlm.apiBase,
+      thinking: parseBoolEnv(
+        process.env['VLM_THINKING'],
+        vlmFromFile.thinking ?? defaults.vlm.thinking,
+      ),
+      maxConcurrent:
+        parseInt(process.env['VLM_MAX_CONCURRENT'] ?? '', 10) ||
+        (vlmFromFile.maxConcurrent ?? defaults.vlm.maxConcurrent),
+      extraHeaders: parseExtraHeaders(
+        process.env['VLM_EXTRA_HEADERS'],
+        vlmFromFile.extraHeaders ?? defaults.vlm.extraHeaders,
+      ),
+      stream: parseBoolEnv(
+        process.env['VLM_STREAM'],
+        vlmFromFile.stream ?? defaults.vlm.stream,
+      ),
     },
     semantic: {
       maxFileContentChars:
         parseInt(process.env['SEMANTIC_MAX_FILE_CONTENT_CHARS'] ?? '', 10) ||
-        (fileConfig.semantic?.maxFileContentChars ?? defaults.semantic.maxFileContentChars),
+        (asNumber(fileSemantic?.['maxFileContentChars']) ?? defaults.semantic.maxFileContentChars),
       maxOverviewPromptChars:
         parseInt(process.env['SEMANTIC_MAX_OVERVIEW_PROMPT_CHARS'] ?? '', 10) ||
-        (fileConfig.semantic?.maxOverviewPromptChars ?? defaults.semantic.maxOverviewPromptChars),
+        (asNumber(fileSemantic?.['maxOverviewPromptChars']) ?? defaults.semantic.maxOverviewPromptChars),
       overviewBatchSize:
         parseInt(process.env['SEMANTIC_OVERVIEW_BATCH_SIZE'] ?? '', 10) ||
-        (fileConfig.semantic?.overviewBatchSize ?? defaults.semantic.overviewBatchSize),
+        (asNumber(fileSemantic?.['overviewBatchSize']) ?? defaults.semantic.overviewBatchSize),
       abstractMaxChars:
         parseInt(process.env['SEMANTIC_ABSTRACT_MAX_CHARS'] ?? '', 10) ||
-        (fileConfig.semantic?.abstractMaxChars ?? defaults.semantic.abstractMaxChars),
+        (asNumber(fileSemantic?.['abstractMaxChars']) ?? defaults.semantic.abstractMaxChars),
       overviewMaxChars:
         parseInt(process.env['SEMANTIC_OVERVIEW_MAX_CHARS'] ?? '', 10) ||
-        (fileConfig.semantic?.overviewMaxChars ?? defaults.semantic.overviewMaxChars),
+        (asNumber(fileSemantic?.['overviewMaxChars']) ?? defaults.semantic.overviewMaxChars),
       memoryChunkChars:
         parseInt(process.env['SEMANTIC_MEMORY_CHUNK_CHARS'] ?? '', 10) ||
-        (fileConfig.semantic?.memoryChunkChars ?? defaults.semantic.memoryChunkChars),
+        (asNumber(fileSemantic?.['memoryChunkChars']) ?? defaults.semantic.memoryChunkChars),
       memoryChunkOverlap:
         parseInt(process.env['SEMANTIC_MEMORY_CHUNK_OVERLAP'] ?? '', 10) ||
-        (fileConfig.semantic?.memoryChunkOverlap ?? defaults.semantic.memoryChunkOverlap),
+        (asNumber(fileSemantic?.['memoryChunkOverlap']) ?? defaults.semantic.memoryChunkOverlap),
     },
     rerank: {
       model:
         process.env['RERANK_MODEL'] ??
-        fileConfig.rerank?.model ??
+        asString(fileRerank?.['model']) ??
         defaults.rerank.model,
       apiKey:
         process.env['RERANK_API_KEY'] ??
-        fileConfig.rerank?.apiKey ??
+        asString(fileRerank?.['apiKey'] ?? fileRerank?.['api_key']) ??
         defaults.rerank.apiKey,
       apiBase:
         process.env['RERANK_API_BASE'] ??
-        fileConfig.rerank?.apiBase ??
+        asString(fileRerank?.['apiBase'] ?? fileRerank?.['api_base']) ??
         defaults.rerank.apiBase,
       threshold:
         parseFloat(process.env['RERANK_THRESHOLD'] ?? '') ||
-        (fileConfig.rerank?.threshold ?? defaults.rerank.threshold),
+        (asNumber(fileRerank?.['threshold']) ?? defaults.rerank.threshold),
     },
     defaultSearchMode: (
       process.env['DEFAULT_SEARCH_MODE'] ??
-      fileConfig.defaultSearchMode ??
+      asString(fileConfig['defaultSearchMode']) ??
       defaults.defaultSearchMode
     ) as SearchMode,
     defaultSearchLimit:
       parseInt(process.env['DEFAULT_SEARCH_LIMIT'] ?? '', 10) ||
-      (fileConfig.defaultSearchLimit ?? defaults.defaultSearchLimit),
+      (asNumber(fileConfig['defaultSearchLimit']) ?? defaults.defaultSearchLimit),
   };
 
   return config;

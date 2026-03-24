@@ -1,12 +1,24 @@
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe, Logger } from '@nestjs/common';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
+import { ConfigService } from '@nestjs/config';
 import basicAuth from 'express-basic-auth';
 import { AppModule } from './app.module';
+import { ApiKeyGuard } from './shared/api-key.guard';
 
 async function bootstrap(): Promise<void> {
   const logger = new Logger('Bootstrap');
   const app = await NestFactory.create(AppModule);
+  const config = app.get(ConfigService);
+
+  const corsOrigins = config.get<string[]>('server.corsOrigins', ['*']);
+  app.enableCors({ origin: corsOrigins });
+
+  const rootApiKey = config.get<string>('server.rootApiKey', '');
+  if (rootApiKey) {
+    app.useGlobalGuards(new ApiKeyGuard(config));
+    logger.log('API key authentication enabled');
+  }
 
   app.useGlobalPipes(
     new ValidationPipe({

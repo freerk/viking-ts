@@ -1,6 +1,6 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { generateText, LanguageModel } from 'ai';
+import { generateText, streamText, LanguageModel } from 'ai';
 import { getLanguageModel, LlmProvider } from './providers';
 import {
   fileSummaryPrompt,
@@ -90,17 +90,27 @@ export class LlmService implements OnModuleInit {
   private usageStats: LlmUsageStats = { calls: 0, inputTokens: 0, outputTokens: 0, byModel: {} };
   private providerName = '';
   private modelName = '';
+  private thinking = false;
+  private maxConcurrent = 100;
+  private extraHeaders: Record<string, string> = {};
+  private useStream = false;
+  private activeCalls = 0;
+  private waitQueue: Array<() => void> = [];
 
   constructor(private readonly config: ConfigService) {}
 
   onModuleInit(): void {
-    const provider = this.config.get<LlmProvider>('llm.provider', 'openai');
-    const model = this.config.get<string>('llm.model', 'gpt-4o-mini');
-    const apiKey = this.config.get<string>('llm.apiKey', '');
-    const apiBase = this.config.get<string>('llm.apiBase', '');
+    const provider = this.config.get<LlmProvider>('vlm.provider', 'openai');
+    const model = this.config.get<string>('vlm.model', 'gpt-4o-mini');
+    const apiKey = this.config.get<string>('vlm.apiKey', '');
+    const apiBase = this.config.get<string>('vlm.apiBase', '');
 
     this.providerName = provider;
     this.modelName = model;
+    this.thinking = this.config.get<boolean>('vlm.thinking', false);
+    this.maxConcurrent = this.config.get<number>('vlm.maxConcurrent', 100);
+    this.extraHeaders = this.config.get<Record<string, string>>('vlm.extraHeaders', {});
+    this.useStream = this.config.get<boolean>('vlm.stream', false);
 
     this.languageModel = getLanguageModel(
       provider,
@@ -109,16 +119,32 @@ export class LlmService implements OnModuleInit {
       apiBase || undefined,
     );
 
-    this.logger.log(`LLM service initialized: provider=${provider} model=${model}`);
+    this.logger.log(`LLM service initialized: provider=${provider} model=${model} thinking=${this.thinking} stream=${this.useStream} maxConcurrent=${this.maxConcurrent}`);
   }
 
   async complete(systemPrompt: string, userContent: string, maxTokens: number = 1024): Promise<string> {
+    await this.acquireSemaphore();
+    try {
+      return await this.doComplete(systemPrompt, userContent, maxTokens);
+    } finally {
+      this.releaseSemaphore();
+    }
+  }
+
+  private async doComplete(systemPrompt: string, userContent: string, maxTokens: number): Promise<string> {
+    const headers = Object.keys(this.extraHeaders).length > 0 ? this.extraHeaders : undefined;
+
+    if (this.useStream) {
+      return this.doStreamComplete(systemPrompt, userContent, maxTokens, headers);
+    }
+
     const { text, usage } = await generateText({
       model: this.languageModel,
       maxOutputTokens: maxTokens,
       temperature: 0,
       system: systemPrompt,
       prompt: userContent,
+      ...(headers ? { headers } : {}),
     });
 
     if (!text) {
@@ -130,6 +156,54 @@ export class LlmService implements OnModuleInit {
     this.trackUsage(inputTokens, outputTokens);
 
     return text.trim();
+  }
+
+  private async doStreamComplete(
+    systemPrompt: string,
+    userContent: string,
+    maxTokens: number,
+    headers: Record<string, string> | undefined,
+  ): Promise<string> {
+    const result = streamText({
+      model: this.languageModel,
+      maxOutputTokens: maxTokens,
+      temperature: 0,
+      system: systemPrompt,
+      prompt: userContent,
+      ...(headers ? { headers } : {}),
+    });
+
+    const text = await result.text;
+    const usage = await result.usage;
+
+    if (!text) {
+      throw new Error('No completion returned from LLM provider');
+    }
+
+    const inputTokens = usage?.inputTokens ?? Math.ceil(userContent.length / 4);
+    const outputTokens = usage?.outputTokens ?? Math.ceil(text.length / 4);
+    this.trackUsage(inputTokens, outputTokens);
+
+    return text.trim();
+  }
+
+  private async acquireSemaphore(): Promise<void> {
+    if (this.activeCalls < this.maxConcurrent) {
+      this.activeCalls++;
+      return;
+    }
+    return new Promise<void>((resolve) => {
+      this.waitQueue.push(() => {
+        this.activeCalls++;
+        resolve();
+      });
+    });
+  }
+
+  private releaseSemaphore(): void {
+    this.activeCalls--;
+    const next = this.waitQueue.shift();
+    if (next) next();
   }
 
   getUsageStats(): LlmUsageStats {
@@ -148,8 +222,8 @@ export class LlmService implements OnModuleInit {
   }
 
   isConfigured(): boolean {
-    const apiKey = this.config.get<string>('llm.apiKey', '');
-    const provider = this.config.get<string>('llm.provider', '');
+    const apiKey = this.config.get<string>('vlm.apiKey', '');
+    const provider = this.config.get<string>('vlm.provider', '');
     return Boolean(apiKey && provider);
   }
 
@@ -182,10 +256,6 @@ export class LlmService implements OnModuleInit {
     );
   }
 
-  /**
-   * Summarize a file using the correct prompt based on extension.
-   * Documents (.md, .txt, .rst) use documentSummaryPrompt; others use fileSummaryPrompt.
-   */
   async summarizeFile(fileName: string, content: string): Promise<string> {
     const capped = content.slice(0, 30_000);
     const dotIndex = fileName.lastIndexOf('.');
@@ -203,10 +273,6 @@ export class LlmService implements OnModuleInit {
     );
   }
 
-  /**
-   * Generate directory overview with numbered file references.
-   * Post-processes [N] refs back to actual filenames.
-   */
   async generateDirectoryOverview(
     dirName: string,
     fileSummaries: ReadonlyArray<{ name: string; summary: string }>,
@@ -237,7 +303,6 @@ export class LlmService implements OnModuleInit {
       2048,
     );
 
-    // Post-process: replace [N] refs with actual filenames
     result = result.replace(/\[(\d+)\]/g, (_match, numStr: string) => {
       const num = parseInt(numStr, 10);
       const name = fileIndexMap.get(num);
@@ -258,9 +323,6 @@ export class LlmService implements OnModuleInit {
     return overviewText.slice(0, 256);
   }
 
-  /**
-   * Extract memories from session messages using the full OpenViking memory_extraction prompt.
-   */
   async extractMemoriesFromSession(
     user: string,
     messages: ReadonlyArray<{ role: string; content: string }>,
@@ -294,9 +356,6 @@ export class LlmService implements OnModuleInit {
     }
   }
 
-  /**
-   * Merge existing memory content with new content.
-   */
   async mergeMemory(
     existingContent: string,
     newContent: string,
@@ -317,10 +376,6 @@ export class LlmService implements OnModuleInit {
     );
   }
 
-  /**
-   * Generate a structured archive summary for session messages.
-   * Uses the structured_summary prompt from OpenViking.
-   */
   async generateArchiveSummary(
     messages: ReadonlyArray<{ role: string; content: string }>,
   ): Promise<string> {
@@ -341,9 +396,6 @@ export class LlmService implements OnModuleInit {
     );
   }
 
-  /**
-   * Decide how to handle a candidate memory vs existing similar memories.
-   */
   async decideDeduplicate(
     candidate: { abstract: string; overview: string; content: string },
     existingMemories: ReadonlyArray<{ uri: string; abstract: string; overview: string; content: string }>,
@@ -368,9 +420,6 @@ export class LlmService implements OnModuleInit {
     return this.parseDedupResponse(response);
   }
 
-  /**
-   * Analyze intent from session context to generate a query plan.
-   */
   async analyzeIntent(
     recentMessages: string,
     currentMessage: string,
@@ -395,9 +444,6 @@ export class LlmService implements OnModuleInit {
     return this.parseQueryPlanResponse(response);
   }
 
-  /**
-   * Legacy extractMemories for backward compatibility.
-   */
   async extractMemories(
     messages: Array<{ role: string; content: string }>,
   ): Promise<Array<{ text: string; category: string }>> {
