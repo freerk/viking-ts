@@ -169,6 +169,71 @@ describe('MemoryService', () => {
     });
   });
 
+  describe('computeAgentSpace and listMemories namespace filter', () => {
+    it('should create agent memory with URI containing md5(userId:agentId)[:12]', async () => {
+      const { createHash } = await import('crypto');
+      const expectedHash = createHash('md5').update('freerk:conor').digest('hex').slice(0, 12);
+
+      const memory = await memoryService.createMemory({
+        text: 'Agent-scoped memory for namespace test',
+        type: 'agent',
+        userId: 'freerk',
+        agentId: 'conor',
+      });
+
+      expect(memory.uri).toContain(expectedHash);
+    });
+
+    it('should find memory when listMemories uses matching agentId and userId', async () => {
+      await memoryService.createMemory({
+        text: 'Freerk+Conor agent memory',
+        type: 'agent',
+        userId: 'freerk',
+        agentId: 'conor',
+      });
+
+      const results = await memoryService.listMemories({
+        agentId: 'conor',
+        userId: 'freerk',
+      });
+
+      expect(results).toHaveLength(1);
+      expect(results[0]?.text).toBe('Freerk+Conor agent memory');
+    });
+
+    it('should NOT find memory when listMemories uses different userId (different hash)', async () => {
+      await memoryService.createMemory({
+        text: 'Freerk+Conor agent memory',
+        type: 'agent',
+        userId: 'freerk',
+        agentId: 'conor',
+      });
+
+      const results = await memoryService.listMemories({
+        agentId: 'conor',
+        userId: 'other',
+      });
+
+      expect(results).toHaveLength(0);
+    });
+
+    it('should NOT find freerk:conor memory when listing with agentId only (default userId)', async () => {
+      await memoryService.createMemory({
+        text: 'Freerk+Conor agent memory',
+        type: 'agent',
+        userId: 'freerk',
+        agentId: 'conor',
+      });
+
+      const results = await memoryService.listMemories({
+        agentId: 'conor',
+      });
+
+      // default userId produces md5('default:conor') which differs from md5('freerk:conor')
+      expect(results).toHaveLength(0);
+    });
+  });
+
   describe('getMemory', () => {
     it('should return a specific memory by ID', async () => {
       const created = await memoryService.createMemory({ text: 'Find me' });

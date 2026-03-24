@@ -83,4 +83,23 @@ describe('RequestContextInterceptor', () => {
       done();
     });
   });
+
+  it('should produce correct agentSpaceName hash for alice:bob', (done) => {
+    const { createHash } = require('crypto');
+    const expectedHash = createHash('md5').update('alice:bob').digest('hex').slice(0, 12);
+
+    const { executionContext, request } = createMockContext({
+      'x-openviking-user': 'alice',
+      'x-openviking-agent': 'bob',
+    });
+
+    interceptor.intercept(executionContext, nextHandler).subscribe(() => {
+      const ctx = request['vikingCtx'] as RequestContext;
+      expect(ctx.user.userId).toBe('alice');
+      expect(ctx.user.agentId).toBe('bob');
+      expect(ctx.user.agentSpaceName()).toBe(expectedHash);
+      expect(ctx.user.agentSpaceName()).toHaveLength(12);
+      done();
+    });
+  });
 });

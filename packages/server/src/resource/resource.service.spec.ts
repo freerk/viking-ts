@@ -70,6 +70,58 @@ describe('ResourceService', () => {
     service = module.get<ResourceService>(ResourceService);
   });
 
+  describe('addResource input modes', () => {
+    it('should write text content to VFS at the specified URI', async () => {
+      mockVfs.writeFile.mockResolvedValue(undefined);
+
+      const result = await service.addResource({
+        text: 'hello world',
+        to: 'viking://resources/test.md',
+      });
+
+      expect(result.status).toBe('success');
+      expect(mockVfs.writeFile).toHaveBeenCalledWith(
+        'viking://resources/test.md',
+        'hello world',
+      );
+    });
+
+    it('should throw 400 when target URI is outside viking://resources/ scope', async () => {
+      await expect(
+        service.addResource({
+          text: 'should fail',
+          to: 'viking://user/default/memories/test.md',
+        }),
+      ).rejects.toThrow('Target URI must be in viking://resources/ scope');
+    });
+
+    it('should throw 400 when both to and parent are specified', async () => {
+      await expect(
+        service.addResource({
+          to: 'viking://resources/dest',
+          parent: 'viking://resources/parent',
+          text: 'conflict',
+        }),
+      ).rejects.toThrow("Cannot specify both 'to' and 'parent'");
+    });
+
+    it('should fetch URL content when path is an HTTP URL', async () => {
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        headers: { get: jest.fn().mockReturnValue('text/plain') },
+        text: jest.fn().mockResolvedValue('Remote doc content'),
+      });
+      mockVfs.writeFile.mockResolvedValue(undefined);
+
+      const result = await service.addResource({
+        path: 'https://example.com/doc.md',
+      });
+
+      expect(global.fetch).toHaveBeenCalledWith('https://example.com/doc.md');
+      expect(result.status).toBe('success');
+    });
+  });
+
   describe('ingestFile with PDF', () => {
     it('should call parsePdf for .pdf files', async () => {
       (parsers.parsePdf as jest.Mock).mockResolvedValue('PDF text content');

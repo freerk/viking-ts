@@ -187,6 +187,27 @@ describe('SkillController', () => {
       expect(call.name).toBe('search-web');
     });
 
+    it('should return URI viking://agent/skills/{name}/ for created skill', async () => {
+      const skill = makeSkillRecord({ name: 'my-skill', uri: 'viking://agent/skills/my-skill/' });
+      mockService.createSkill.mockResolvedValue(skill);
+
+      const res = await request(app.getHttpServer())
+        .post('/api/v1/skills')
+        .send({
+          data: {
+            name: 'my-skill',
+            description: 'A skill for testing URI',
+            content: 'Skill content here',
+          },
+        })
+        .expect(201);
+
+      expect(res.body.result.uri).toBe('viking://agent/skills/my-skill/');
+      expect(mockService.createSkill).toHaveBeenCalledWith(
+        expect.objectContaining({ name: 'my-skill' }),
+      );
+    });
+
     it('should include required annotation in MCP parameter markdown', async () => {
       const skill = makeSkillRecord();
       mockService.createSkill.mockResolvedValue(skill);

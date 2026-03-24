@@ -316,5 +316,70 @@ describe('PackService', () => {
     it('should reject paths with mismatched root', () => {
       expect(() => validateZipEntryPath('other/file.md', 'proj')).toThrow('Invalid root in zip');
     });
+
+    it('should reject ../escape traversal path', () => {
+      expect(() => validateZipEntryPath('../escape', 'proj')).toThrow('Unsafe path');
+    });
+  });
+
+  describe('export then import round-trip', () => {
+    it('should export a tree and import it back to VFS', async () => {
+      const TREE: TreeNode = {
+        uri: 'viking://resources/roundtrip',
+        name: 'roundtrip',
+        isDir: true,
+        size: 0,
+        children: [
+          { uri: 'viking://resources/roundtrip/doc.md', name: 'doc.md', isDir: false, size: 12 },
+        ],
+      };
+
+      mockVfs.tree.mockResolvedValue(TREE);
+      mockVfs.readFile.mockResolvedValue('Round-trip content');
+      mockVfs.exists.mockResolvedValue(false);
+      mockVfs.writeFile.mockResolvedValue({});
+
+      const exportPath = path.join(tmpDir, 'roundtrip.ovpack');
+      const exported = await service.exportOvpack('viking://resources/roundtrip', exportPath);
+      expect(fs.existsSync(exported)).toBe(true);
+
+      const importResult = await service.importOvpack(exported, 'viking://resources', false, false);
+      expect(importResult).toBe('viking://resources/roundtrip');
+      expect(mockVfs.writeFile).toHaveBeenCalledWith(
+        'viking://resources/roundtrip/doc.md',
+        expect.any(String),
+      );
+    });
+
+    it('should enqueue embeddings for each file when vectorize=true in round-trip', async () => {
+      const TREE: TreeNode = {
+        uri: 'viking://resources/vec-test',
+        name: 'vec-test',
+        isDir: true,
+        size: 0,
+        children: [
+          { uri: 'viking://resources/vec-test/a.md', name: 'a.md', isDir: false, size: 5 },
+          { uri: 'viking://resources/vec-test/b.md', name: 'b.md', isDir: false, size: 5 },
+        ],
+      };
+
+      mockVfs.tree.mockResolvedValue(TREE);
+      mockVfs.readFile.mockResolvedValue('Content');
+      mockVfs.exists.mockResolvedValue(false);
+      mockVfs.writeFile.mockResolvedValue({});
+
+      const exportPath = path.join(tmpDir, 'vec.ovpack');
+      await service.exportOvpack('viking://resources/vec-test', exportPath);
+      await service.importOvpack(exportPath, 'viking://resources', false, true);
+
+      // a.md, b.md, and _._meta.json are all enqueued
+      expect(mockEmbeddingQueue.enqueue).toHaveBeenCalledWith(
+        expect.objectContaining({ uri: 'viking://resources/vec-test/a.md' }),
+      );
+      expect(mockEmbeddingQueue.enqueue).toHaveBeenCalledWith(
+        expect.objectContaining({ uri: 'viking://resources/vec-test/b.md' }),
+      );
+      expect(mockEmbeddingQueue.enqueue).toHaveBeenCalledTimes(3);
+    });
   });
 });
