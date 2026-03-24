@@ -76,10 +76,20 @@ export interface QueryPlan {
   queries: TypedQuery[];
 }
 
+export interface LlmUsageStats {
+  calls: number;
+  inputTokens: number;
+  outputTokens: number;
+  byModel: Record<string, { calls: number; inputTokens: number; outputTokens: number }>;
+}
+
 @Injectable()
 export class LlmService implements OnModuleInit {
   private readonly logger = new Logger(LlmService.name);
   private languageModel!: LanguageModel;
+  private usageStats: LlmUsageStats = { calls: 0, inputTokens: 0, outputTokens: 0, byModel: {} };
+  private providerName = '';
+  private modelName = '';
 
   constructor(private readonly config: ConfigService) {}
 
@@ -88,6 +98,9 @@ export class LlmService implements OnModuleInit {
     const model = this.config.get<string>('llm.model', 'gpt-4o-mini');
     const apiKey = this.config.get<string>('llm.apiKey', '');
     const apiBase = this.config.get<string>('llm.apiBase', '');
+
+    this.providerName = provider;
+    this.modelName = model;
 
     this.languageModel = getLanguageModel(
       provider,
@@ -100,7 +113,7 @@ export class LlmService implements OnModuleInit {
   }
 
   async complete(systemPrompt: string, userContent: string, maxTokens: number = 1024): Promise<string> {
-    const { text } = await generateText({
+    const { text, usage } = await generateText({
       model: this.languageModel,
       maxOutputTokens: maxTokens,
       temperature: 0,
@@ -112,7 +125,45 @@ export class LlmService implements OnModuleInit {
       throw new Error('No completion returned from LLM provider');
     }
 
+    const inputTokens = usage?.inputTokens ?? Math.ceil(userContent.length / 4);
+    const outputTokens = usage?.outputTokens ?? Math.ceil(text.length / 4);
+    this.trackUsage(inputTokens, outputTokens);
+
     return text.trim();
+  }
+
+  getUsageStats(): LlmUsageStats {
+    return {
+      ...this.usageStats,
+      byModel: { ...this.usageStats.byModel },
+    };
+  }
+
+  getProviderName(): string {
+    return this.providerName;
+  }
+
+  getModelName(): string {
+    return this.modelName;
+  }
+
+  isConfigured(): boolean {
+    const apiKey = this.config.get<string>('llm.apiKey', '');
+    const provider = this.config.get<string>('llm.provider', '');
+    return Boolean(apiKey && provider);
+  }
+
+  private trackUsage(inputTokens: number, outputTokens: number): void {
+    this.usageStats.calls += 1;
+    this.usageStats.inputTokens += inputTokens;
+    this.usageStats.outputTokens += outputTokens;
+
+    const key = `${this.providerName}/${this.modelName}`;
+    const existing = this.usageStats.byModel[key] ?? { calls: 0, inputTokens: 0, outputTokens: 0 };
+    existing.calls += 1;
+    existing.inputTokens += inputTokens;
+    existing.outputTokens += outputTokens;
+    this.usageStats.byModel[key] = existing;
   }
 
   async generateAbstract(content: string): Promise<string> {

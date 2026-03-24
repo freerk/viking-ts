@@ -383,6 +383,13 @@ export class ContextVectorService {
     return scored.slice(0, limit);
   }
 
+  count(): number {
+    const row = this.database.db
+      .prepare('SELECT COUNT(*) as count FROM context_vectors')
+      .get() as { count: number };
+    return row.count;
+  }
+
   async incrementActiveCount(uri: string): Promise<void> {
     this.database.db
       .prepare('UPDATE context_vectors SET active_count = active_count + 1, updated_at = ? WHERE uri = ?')
