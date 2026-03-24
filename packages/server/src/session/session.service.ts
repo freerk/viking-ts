@@ -7,6 +7,7 @@ import { LlmService } from '../llm/llm.service';
 import { SemanticQueueService } from '../queue/semantic-queue.service';
 import { SessionExtractorService, CandidateMemory } from './session-extractor.service';
 import { SessionMemoryWriterService } from './session-memory-writer.service';
+import { DirectoryInitializerService } from '../storage/directory-initializer.service';
 import { NotFoundError, ConflictError } from '../shared/errors';
 import { RequestContext, UserIdentifier } from '../shared/request-context';
 
@@ -81,6 +82,7 @@ export class SessionService {
     private readonly memoryWriter: SessionMemoryWriterService,
     private readonly llm: LlmService,
     private readonly semanticQueue: SemanticQueueService,
+    private readonly directoryInitializer: DirectoryInitializerService,
   ) {}
 
   private rowToRecord(row: SessionRow): SessionRecord {
@@ -111,7 +113,8 @@ export class SessionService {
       )
       .run(sessionId, accountId, userId, agentId, now, now);
 
-    await this.ensureUserDirectories(ctx);
+    await this.directoryInitializer.initializeUserSpace(ctx);
+    await this.directoryInitializer.initializeAgentSpace(ctx);
 
     this.logger.log(`Session created: ${sessionId}`);
 
@@ -416,24 +419,4 @@ export class SessionService {
     });
   }
 
-  private async ensureUserDirectories(ctx: RequestContext): Promise<void> {
-    const userMemDir = `viking://user/${ctx.user.userSpaceName()}/memories`;
-    const agentMemDir = `viking://agent/${ctx.user.agentSpaceName()}/memories`;
-
-    try {
-      if (!(await this.vfs.exists(userMemDir))) {
-        await this.vfs.mkdir(userMemDir);
-      }
-    } catch {
-      // directory may already exist
-    }
-
-    try {
-      if (!(await this.vfs.exists(agentMemDir))) {
-        await this.vfs.mkdir(agentMemDir);
-      }
-    } catch {
-      // directory may already exist
-    }
-  }
 }

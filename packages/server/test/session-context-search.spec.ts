@@ -6,6 +6,7 @@ import { LlmService } from '../src/llm/llm.service';
 import { SemanticQueueService } from '../src/queue/semantic-queue.service';
 import { SessionExtractorService } from '../src/session/session-extractor.service';
 import { SessionMemoryWriterService } from '../src/session/session-memory-writer.service';
+import { DirectoryInitializerService } from '../src/storage/directory-initializer.service';
 
 describe('SessionService.getContextForSearch', () => {
   let service: SessionService;
@@ -58,6 +59,7 @@ describe('SessionService.getContextForSearch', () => {
       {} as SessionMemoryWriterService,
       {} as LlmService,
       {} as SemanticQueueService,
+      {} as DirectoryInitializerService,
     );
   });
 
