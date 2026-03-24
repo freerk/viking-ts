@@ -39,10 +39,13 @@ const memories = result.toolCall.arguments; // guaranteed valid
 - **Relationships**: Proper foreign keys, lazy loading, cascades — currently managed manually
 - **Existing foundation**: The `database/entities/` directory already has `Memory`, `Resource`, `Skill`, `Session`, `SessionMessage` entities ready
 
-**Reference implementation**: The `whisperline-org` API repo uses TypeORM with:
-- A **tenant guard** (`TenantGuard`) that injects the tenant context into every repository operation — highly relevant for viking-ts multi-agent namespacing (the `ownerSpace` concept maps directly)
-- **Embedding storage** using `toSql()`/`fromSql()` column transformers for vector arrays in PostgreSQL with `pgvector` extension — cleaner than JSON serialization in SQLite
-- TypeORM factory pattern for test fixtures
+**Reference implementation**: The `whisperline-api` repo (`~/code/whisperline-api`) uses TypeORM with:
+
+- **`ScopedRepository`** (`src/common/persistence/scoped-repository.ts`): Wraps TypeORM's `Repository<T>` and automatically injects `WHERE organisationId = ?` on every `find`, `save`, `update`, `delete` — prevents cross-tenant data access at the repository level. Every service uses `new ScopedRepository(this._repo, organisationId)` rather than raw repository. This is the pattern for viking-ts agent namespace isolation: replace `WHERE owner_space = ?` SQL strings with a `ScopedRepository` that injects `ownerSpace` automatically. **This wrapper is generic enough to publish as an npm package** (`@whisperline/nestjs-scoped-repository` or similar).
+
+- **Embedding storage with `pgvector`**: Uses `pgvector.toSql(embedding)` to store and `pgvector.fromSql(row.embedding)` to read vectors. Column declared as `@Column('vector', { nullable: true })` on the entity. See `src/whispers/enrichment/semantic-embedding.service.ts` for the full pattern — `pgvector.toSql(response.embedding) as string` stored directly, no JSON serialization.
+
+- **TypeORM entities**: All entities extend a clean base with `@PrimaryGeneratedColumn('uuid')`, proper `@Index()` decorators, `@ManyToOne`/`@OneToMany` relations. See `WhisperEntity`, `OrganisationEntity`.
 
 **For vectors specifically**:
 - Current: embeddings stored as `TEXT` (JSON array string) in SQLite, deserialized on every read, cosine similarity computed in Node.js (O(n) scan)
