@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { VfsService } from '../storage/vfs.service';
 import { LlmService } from '../llm/llm.service';
 import { EmbeddingQueueService } from './embedding-queue.service';
+import { ContextVectorService } from '../storage/context-vector.service';
 import { chunkText } from './text-utils';
 
 export interface SemanticJob {
@@ -28,6 +29,7 @@ export class SemanticProcessorService {
     private readonly llm: LlmService,
     private readonly embeddingQueue: EmbeddingQueueService,
     private readonly config: ConfigService,
+    private readonly contextVectors: ContextVectorService,
   ) {}
 
   async processDirectory(job: SemanticJob): Promise<void> {
@@ -295,6 +297,10 @@ export class SemanticProcessorService {
 
     await this.vfs.writeFile(abstractUri, abstract);
     await this.vfs.writeFile(overviewUri, overview);
+
+    // Back-propagate L0/L1 into the parent vector record so that list/search
+    // responses return populated l0Abstract and l1Overview fields.
+    this.contextVectors.updateAbstractAndDescription(job.uri, abstract, overview).catch(() => {});
 
     this.embeddingQueue.enqueue({
       uri: abstractUri,

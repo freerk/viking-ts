@@ -181,6 +181,15 @@ export class ContextVectorService {
     return result.changes > 0;
   }
 
+  /** Back-propagate L0 abstract and L1 overview into the vector record for a given URI. */
+  async updateAbstractAndDescription(uri: string, abstract: string, description: string): Promise<void> {
+    this.database.db
+      .prepare(
+        `UPDATE context_vectors SET abstract = ?, description = ?, updated_at = ? WHERE uri = ?`,
+      )
+      .run(abstract, description, new Date().toISOString(), uri);
+  }
+
   async deleteById(id: string): Promise<boolean> {
     const result = this.database.db
       .prepare('DELETE FROM context_vectors WHERE id = ?')

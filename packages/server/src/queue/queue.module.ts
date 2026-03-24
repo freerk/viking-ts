@@ -3,8 +3,10 @@ import { EmbeddingQueueService } from './embedding-queue.service';
 import { SemanticQueueService } from './semantic-queue.service';
 import { SemanticProcessorService } from './semantic-processor.service';
 import { ObserverController } from './observer.controller';
+import { StorageModule } from '../storage/storage.module';
 
 @Module({
+  imports: [StorageModule],
   providers: [
     EmbeddingQueueService,
     SemanticQueueService,

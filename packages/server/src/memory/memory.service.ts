@@ -230,6 +230,11 @@ export class MemoryService {
     }
 
     let filtered = records;
+    // Exclude VFS directory metadata nodes — these are internal files written by the
+    // semantic processor, not user/agent memories.
+    filtered = filtered.filter(
+      (r) => !r.uri.endsWith('.abstract.md') && !r.uri.endsWith('.overview.md'),
+    );
     if (filters.type) {
       const prefix = filters.type === 'agent' ? 'viking://agent/' : 'viking://user/';
       filtered = filtered.filter((r) => r.uri.startsWith(prefix));
