@@ -240,6 +240,52 @@ export class LlmService implements OnModuleInit {
     this.usageStats.byModel[key] = existing;
   }
 
+  async describeImage(
+    prompt: string,
+    imageBase64: string,
+    mimeType: string,
+  ): Promise<string> {
+    await this.acquireSemaphore();
+    try {
+      const headers = Object.keys(this.extraHeaders).length > 0 ? this.extraHeaders : undefined;
+
+      const { text, usage } = await generateText({
+        model: this.languageModel,
+        maxOutputTokens: 1024,
+        temperature: 0,
+        messages: [
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'image',
+                image: imageBase64,
+                mediaType: mimeType,
+              },
+              {
+                type: 'text',
+                text: prompt,
+              },
+            ],
+          },
+        ],
+        ...(headers ? { headers } : {}),
+      });
+
+      if (!text) {
+        throw new Error('No description returned from VLM provider');
+      }
+
+      const inputTokens = usage?.inputTokens ?? 500;
+      const outputTokens = usage?.outputTokens ?? Math.ceil(text.length / 4);
+      this.trackUsage(inputTokens, outputTokens);
+
+      return text.trim();
+    } finally {
+      this.releaseSemaphore();
+    }
+  }
+
   async generateAbstract(content: string): Promise<string> {
     return this.complete(
       'Generate an ultra-concise one-sentence abstract (under 50 tokens) of the following content. Focus on the key topic and purpose. Return only the abstract, no prefix.',

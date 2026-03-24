@@ -1,16 +1,39 @@
 import { Injectable, Logger, BadRequestException, NotFoundException, Optional } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { readFileSync, existsSync, statSync, readdirSync } from 'fs';
-import { join, relative, basename } from 'path';
+import { join, relative, basename, extname } from 'path';
 import { v4 as uuid } from 'uuid';
 import { VfsService } from '../storage/vfs.service';
 import { ContextVectorService } from '../storage/context-vector.service';
 import { EmbeddingService } from '../embedding/embedding.service';
 import { EmbeddingQueueService } from '../queue/embedding-queue.service';
 import { SemanticQueueService } from '../queue/semantic-queue.service';
+import { LlmService } from '../llm/llm.service';
 import { ResourceRecord, SearchResult } from '../shared/types';
+import {
+  parsePdf,
+  parseDocx,
+  parseXlsx,
+  parsePptx,
+  parseHtml,
+  parseImage,
+  parseAudio,
+  stripHtmlTags,
+} from './parsers';
+import { TranscriptionConfig } from './parsers/audio';
 
 const WALKABLE_EXTENSIONS = new Set([
-  '.md', '.txt', '.ts', '.js', '.py', '.json', '.yaml', '.yml',
+  // Text
+  '.md', '.txt', '.ts', '.js', '.mjs', '.cjs', '.py', '.go', '.java', '.rs', '.rb', '.php', '.cs', '.cpp', '.c', '.h',
+  '.json', '.yaml', '.yml', '.toml', '.ini', '.env',
+  // Documents
+  '.pdf', '.docx', '.doc', '.xlsx', '.xls', '.csv', '.pptx', '.ppt',
+  // Web
+  '.html', '.htm',
+  // Images (only processed if VLM multimodal configured)
+  '.png', '.jpg', '.jpeg', '.gif', '.webp',
+  // Audio (only processed if transcription configured)
+  '.mp3', '.wav', '.m4a', '.ogg',
 ]);
 const SKIP_DIRS = new Set(['.git', 'node_modules', 'dist']);
 
@@ -27,7 +50,7 @@ interface AddResourceParams {
 }
 
 interface AddResourceResult {
-  status: 'success';
+  status: 'success' | 'error';
   root_uri: string;
   source_path: string | null;
   errors: string[];
@@ -68,14 +91,24 @@ function walkDirectory(dir: string): string[] {
 @Injectable()
 export class ResourceService {
   private readonly logger = new Logger(ResourceService.name);
+  private readonly transcriptionConfig: TranscriptionConfig;
 
   constructor(
     private readonly vfs: VfsService,
     private readonly contextVectors: ContextVectorService,
     private readonly embeddingService: EmbeddingService,
+    private readonly configService: ConfigService,
+    @Optional() private readonly llmService?: LlmService,
     @Optional() private readonly embeddingQueue?: EmbeddingQueueService,
     @Optional() private readonly semanticQueue?: SemanticQueueService,
-  ) {}
+  ) {
+    this.transcriptionConfig = {
+      provider: this.configService.get<string>('transcription.provider', 'openai'),
+      apiKey: this.configService.get<string>('transcription.apiKey', ''),
+      apiBase: this.configService.get<string>('transcription.apiBase', 'https://api.openai.com/v1'),
+      model: this.configService.get<string>('transcription.model', 'whisper-1'),
+    };
+  }
 
   async addResource(params: AddResourceParams): Promise<AddResourceResult> {
     if (params.to && params.parent) {
@@ -181,11 +214,27 @@ export class ResourceService {
   }
 
   private async ingestFile(params: AddResourceParams, filePath: string): Promise<AddResourceResult> {
+    const ext = extname(filePath).toLowerCase();
     let content: string;
+
     try {
-      content = readFileSync(filePath, 'utf-8');
-    } catch {
-      throw new BadRequestException(`Cannot read file: ${filePath}`);
+      content = await this.parseFile(filePath, ext);
+    } catch (err) {
+      return {
+        status: 'error',
+        root_uri: '',
+        source_path: filePath,
+        errors: [`Parse error: ${String(err)}`],
+      };
+    }
+
+    if (!content.trim()) {
+      return {
+        status: 'error',
+        root_uri: '',
+        source_path: filePath,
+        errors: [`No content extracted from ${basename(filePath)}`],
+      };
     }
 
     const fileName = basename(filePath);
@@ -201,6 +250,42 @@ export class ResourceService {
     };
   }
 
+  private async parseFile(filePath: string, ext: string): Promise<string> {
+    switch (ext) {
+      case '.pdf':
+        return parsePdf(filePath);
+      case '.docx':
+      case '.doc':
+        return parseDocx(filePath);
+      case '.xlsx':
+      case '.xls':
+      case '.csv':
+        return parseXlsx(filePath);
+      case '.pptx':
+      case '.ppt':
+        return parsePptx(filePath);
+      case '.html':
+      case '.htm':
+        return parseHtml(filePath);
+      case '.png':
+      case '.jpg':
+      case '.jpeg':
+      case '.gif':
+      case '.webp':
+        if (!this.llmService) {
+          return '[Image parsing requires VLM service]';
+        }
+        return parseImage(filePath, this.llmService);
+      case '.mp3':
+      case '.wav':
+      case '.m4a':
+      case '.ogg':
+        return parseAudio(filePath, this.transcriptionConfig);
+      default:
+        return readFileSync(filePath, 'utf-8');
+    }
+  }
+
   private async ingestDirectory(params: AddResourceParams, dirPath: string): Promise<AddResourceResult> {
     const dirName = basename(dirPath);
     const rootUri = this.resolveRootUri(params, dirName);
@@ -210,8 +295,13 @@ export class ResourceService {
     for (const file of files) {
       const relPath = relative(dirPath, file);
       const fileUri = `${rootUri.replace(/\/$/, '')}/${relPath}`;
+      const ext = extname(file).toLowerCase();
       try {
-        const content = readFileSync(file, 'utf-8');
+        const content = await this.parseFile(file, ext);
+        if (!content.trim()) {
+          errors.push(`${relPath}: No content extracted`);
+          continue;
+        }
         await this.storeUnit(fileUri, content, basename(file), params.reason);
       } catch (err) {
         errors.push(`${relPath}: ${String(err)}`);
@@ -234,7 +324,15 @@ export class ResourceService {
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`);
       }
-      content = await response.text();
+
+      const contentType = response.headers.get('content-type') ?? '';
+      const body = await response.text();
+
+      if (contentType.includes('text/html')) {
+        content = stripHtmlTags(body);
+      } else {
+        content = body;
+      }
     } catch (err) {
       throw new BadRequestException(`Cannot fetch URL: ${url} (${String(err)})`);
     }

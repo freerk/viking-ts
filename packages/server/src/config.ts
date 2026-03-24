@@ -62,6 +62,12 @@ export interface VikingConfig {
     extraHeaders: Record<string, string>;
     stream: boolean;
   };
+  transcription: {
+    provider: string;
+    apiKey: string;
+    apiBase: string;
+    model: string;
+  };
   semantic: SemanticConfig;
   rerank: RerankConfig;
   defaultSearchMode: SearchMode;
@@ -238,6 +244,12 @@ export function loadConfig(): VikingConfig {
       memoryChunkChars: 2000,
       memoryChunkOverlap: 200,
     },
+    transcription: {
+      provider: 'openai',
+      apiKey: '',
+      apiBase: 'https://api.openai.com/v1',
+      model: 'whisper-1',
+    },
     rerank: {
       model: '',
       apiKey: '',
@@ -265,6 +277,7 @@ export function loadConfig(): VikingConfig {
   const fileEmbedding = fileConfig['embedding'] as Record<string, unknown> | undefined;
   const fileSemantic = fileConfig['semantic'] as Record<string, unknown> | undefined;
   const fileRerank = fileConfig['rerank'] as Record<string, unknown> | undefined;
+  const fileTranscription = fileConfig['transcription'] as Record<string, unknown> | undefined;
 
   const embFromFile = resolveEmbeddingFromFile(fileEmbedding);
   const vlmFromFile = resolveVlmFromFile(fileConfig);
@@ -410,6 +423,24 @@ export function loadConfig(): VikingConfig {
       memoryChunkOverlap:
         parseInt(process.env['SEMANTIC_MEMORY_CHUNK_OVERLAP'] ?? '', 10) ||
         (asNumber(fileSemantic?.['memoryChunkOverlap']) ?? defaults.semantic.memoryChunkOverlap),
+    },
+    transcription: {
+      provider:
+        process.env['TRANSCRIPTION_PROVIDER'] ??
+        asString(fileTranscription?.['provider']) ??
+        defaults.transcription.provider,
+      apiKey:
+        process.env['TRANSCRIPTION_API_KEY'] ??
+        asString(fileTranscription?.['apiKey'] ?? fileTranscription?.['api_key']) ??
+        defaults.transcription.apiKey,
+      apiBase:
+        process.env['TRANSCRIPTION_API_BASE'] ??
+        asString(fileTranscription?.['apiBase'] ?? fileTranscription?.['api_base']) ??
+        defaults.transcription.apiBase,
+      model:
+        process.env['TRANSCRIPTION_MODEL'] ??
+        asString(fileTranscription?.['model']) ??
+        defaults.transcription.model,
     },
     rerank: {
       model:
