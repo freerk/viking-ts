@@ -225,6 +225,14 @@ export class SessionService {
     return this.extractor.extract(formattedMessages);
   }
 
+  async commit(
+    sessionId: string,
+    ctx: RequestContext,
+  ): Promise<{ session_id: string; status: 'committed'; archived: boolean; memories_extracted: number }> {
+    await this.get(sessionId);
+    return this.runCommit(sessionId, ctx);
+  }
+
   async commitAsync(sessionId: string, ctx: RequestContext): Promise<{ session_id: string; status: string; task_id: string }> {
     await this.get(sessionId);
 
@@ -300,7 +308,7 @@ export class SessionService {
   }
 
   /**
-   * Two-phase session commit matching OpenViking session.py commit_async().
+   * Two-phase session commit matching OpenViking session.py.
    *
    * Phase 1 - Archive:
    *   Generate archive summary, write archive to VFS, clear session messages.
@@ -308,95 +316,108 @@ export class SessionService {
    * Phase 2 - Memory extraction + dedup:
    *   Extract memories from archived messages, write with dedup.
    */
+  private async runCommit(
+    sessionId: string,
+    ctx: RequestContext,
+  ): Promise<{ session_id: string; status: 'committed'; archived: boolean; memories_extracted: number }> {
+    const session = await this.get(sessionId);
+    const messages = this.getMessages(sessionId);
+
+    if (messages.length === 0) {
+      return {
+        session_id: sessionId,
+        status: 'committed',
+        archived: false,
+        memories_extracted: 0,
+      };
+    }
+
+    const formattedMessages = this.formatMessages(messages);
+
+    // Phase 1: Archive
+    const compressionIndex = session.compression_index + 1;
+    const archiveUri = `viking://session/${ctx.user.userSpaceName()}/${sessionId}/history/archive_${String(compressionIndex).padStart(3, '0')}`;
+
+    let summary: string;
+    try {
+      summary = await this.llm.generateArchiveSummary(formattedMessages);
+    } catch (err) {
+      this.logger.warn(`Archive summary generation failed: ${String(err)}`);
+      const turnCount = formattedMessages.filter((m) => m.role === 'user').length;
+      summary = `# Session Summary\n\n**Overview**: ${turnCount} turns, ${formattedMessages.length} messages`;
+    }
+
+    const archiveAbstract = this.llm.extractAbstractFromOverview(summary);
+
+    // Write archive files to VFS
+    const serializedMessages = messages
+      .map((m) => JSON.stringify({ id: m.id, role: m.role, content: m.content, created_at: m.created_at }))
+      .join('\n') + '\n';
+
+    await this.vfs.writeFile(`${archiveUri}/messages.jsonl`, serializedMessages);
+    await this.vfs.writeFile(`${archiveUri}/.abstract.md`, archiveAbstract);
+    await this.vfs.writeFile(`${archiveUri}/.overview.md`, summary);
+
+    // Clear session messages from DB and update session
+    const now = new Date().toISOString();
+    this.database.db
+      .prepare('DELETE FROM session_messages WHERE session_id = ?')
+      .run(sessionId);
+
+    this.database.db
+      .prepare(
+        `UPDATE sessions SET message_count = 0, compression_index = ?, updated_at = ? WHERE session_id = ?`,
+      )
+      .run(compressionIndex, now, sessionId);
+
+    // Enqueue archive for semantic processing
+    this.semanticQueue.enqueue({
+      uri: archiveUri,
+      contextType: 'memory',
+      accountId: ctx.user.accountId,
+      ownerSpace: ctx.user.userSpaceName(),
+    });
+
+    this.logger.log(
+      `Phase 1 complete: archived ${messages.length} messages to ${archiveUri}`,
+    );
+
+    // Phase 2: Memory extraction + dedup
+    const candidates = await this.extractor.extract(formattedMessages);
+
+    let memoriesExtracted = 0;
+    if (candidates.length > 0) {
+      memoriesExtracted = await this.memoryWriter.writeAll(candidates, ctx);
+    }
+
+    const commitNow = new Date().toISOString();
+    this.database.db
+      .prepare(`UPDATE sessions SET status = 'committed', updated_at = ? WHERE session_id = ?`)
+      .run(commitNow, sessionId);
+
+    this.logger.log(
+      `Session ${sessionId} committed: ${memoriesExtracted} memories extracted, archive_${String(compressionIndex).padStart(3, '0')}`,
+    );
+
+    return {
+      session_id: sessionId,
+      status: 'committed',
+      archived: true,
+      memories_extracted: memoriesExtracted,
+    };
+  }
+
   private runCommitInBackground(sessionId: string, taskId: string, ctx: RequestContext): void {
     this.taskTracker.start(taskId);
 
     const doCommit = async (): Promise<void> => {
       try {
-        const session = await this.get(sessionId);
-        const messages = this.getMessages(sessionId);
-
-        if (messages.length === 0) {
-          this.taskTracker.complete(taskId, {
-            session_id: sessionId,
-            memories_extracted: 0,
-            archived: false,
-          });
-          return;
-        }
-
-        const formattedMessages = this.formatMessages(messages);
-
-        // Phase 1: Archive
-        const compressionIndex = session.compression_index + 1;
-        const archiveUri = `viking://session/${ctx.user.userSpaceName()}/${sessionId}/history/archive_${String(compressionIndex).padStart(3, '0')}`;
-
-        let summary: string;
-        try {
-          summary = await this.llm.generateArchiveSummary(formattedMessages);
-        } catch (err) {
-          this.logger.warn(`Archive summary generation failed: ${String(err)}`);
-          const turnCount = formattedMessages.filter((m) => m.role === 'user').length;
-          summary = `# Session Summary\n\n**Overview**: ${turnCount} turns, ${formattedMessages.length} messages`;
-        }
-
-        const archiveAbstract = this.llm.extractAbstractFromOverview(summary);
-
-        // Write archive files to VFS
-        const serializedMessages = messages
-          .map((m) => JSON.stringify({ id: m.id, role: m.role, content: m.content, created_at: m.created_at }))
-          .join('\n') + '\n';
-
-        await this.vfs.writeFile(`${archiveUri}/messages.jsonl`, serializedMessages);
-        await this.vfs.writeFile(`${archiveUri}/.abstract.md`, archiveAbstract);
-        await this.vfs.writeFile(`${archiveUri}/.overview.md`, summary);
-
-        // Clear session messages from DB and update session
-        const now = new Date().toISOString();
-        this.database.db
-          .prepare('DELETE FROM session_messages WHERE session_id = ?')
-          .run(sessionId);
-
-        this.database.db
-          .prepare(
-            `UPDATE sessions SET message_count = 0, compression_index = ?, updated_at = ? WHERE session_id = ?`,
-          )
-          .run(compressionIndex, now, sessionId);
-
-        // Enqueue archive for semantic processing
-        this.semanticQueue.enqueue({
-          uri: archiveUri,
-          contextType: 'memory',
-          accountId: ctx.user.accountId,
-          ownerSpace: ctx.user.userSpaceName(),
-        });
-
-        this.logger.log(
-          `Phase 1 complete: archived ${messages.length} messages to ${archiveUri}`,
-        );
-
-        // Phase 2: Memory extraction + dedup
-        const candidates = await this.extractor.extract(formattedMessages);
-
-        let memoriesExtracted = 0;
-        if (candidates.length > 0) {
-          memoriesExtracted = await this.memoryWriter.writeAll(candidates, ctx);
-        }
-
-        const commitNow = new Date().toISOString();
-        this.database.db
-          .prepare(`UPDATE sessions SET status = 'committed', updated_at = ? WHERE session_id = ?`)
-          .run(commitNow, sessionId);
-
+        const result = await this.runCommit(sessionId, ctx);
         this.taskTracker.complete(taskId, {
-          session_id: sessionId,
-          memories_extracted: memoriesExtracted,
-          archived: true,
+          session_id: result.session_id,
+          memories_extracted: result.memories_extracted,
+          archived: result.archived,
         });
-
-        this.logger.log(
-          `Session ${sessionId} committed: ${memoriesExtracted} memories extracted, archive_${String(compressionIndex).padStart(3, '0')}`,
-        );
       } catch (err) {
         this.taskTracker.fail(taskId, String(err));
         this.logger.error(`Session ${sessionId} commit failed: ${String(err)}`);

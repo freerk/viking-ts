@@ -35,6 +35,7 @@ describe('SessionController (HTTP)', () => {
       delete: jest.fn(),
       addMessage: jest.fn(),
       recordUsed: jest.fn(),
+      commit: jest.fn(),
       commitAsync: jest.fn(),
       extract: jest.fn(),
     };
@@ -132,11 +133,12 @@ describe('SessionController (HTTP)', () => {
   });
 
   describe('POST /api/v1/sessions/:id/commit', () => {
-    it('should return accepted with task_id', async () => {
-      sessionService.commitAsync!.mockResolvedValue({
+    it('should default to synchronous commit and return full result', async () => {
+      sessionService.commit!.mockResolvedValue({
         session_id: 'sess-1',
-        status: 'accepted',
-        task_id: 'task-abc',
+        status: 'committed',
+        archived: true,
+        memories_extracted: 3,
       });
 
       const res = await request(app.getHttpServer())
@@ -145,9 +147,49 @@ describe('SessionController (HTTP)', () => {
 
       expect(res.body.status).toBe('ok');
       expect(res.body.result.session_id).toBe('sess-1');
-      expect(res.body.result.status).toBe('accepted');
+      expect(res.body.result.status).toBe('committed');
+      expect(res.body.result.archived).toBe(true);
+      expect(res.body.result.memories_extracted).toBe(3);
+      expect(sessionService.commit).toHaveBeenCalledTimes(1);
+      expect(sessionService.commitAsync).not.toHaveBeenCalled();
+    });
+
+    it('should return synchronous result when wait=true', async () => {
+      sessionService.commit!.mockResolvedValue({
+        session_id: 'sess-1',
+        status: 'committed',
+        archived: true,
+        memories_extracted: 5,
+      });
+
+      const res = await request(app.getHttpServer())
+        .post('/api/v1/sessions/sess-1/commit?wait=true')
+        .expect(201);
+
+      expect(res.body.status).toBe('ok');
+      expect(res.body.result.status).toBe('committed');
+      expect(res.body.result.memories_extracted).toBe(5);
+      expect(sessionService.commit).toHaveBeenCalledTimes(1);
+    });
+
+    it('should return async result when wait=false', async () => {
+      sessionService.commitAsync!.mockResolvedValue({
+        session_id: 'sess-1',
+        status: 'accepted',
+        task_id: 'task-abc',
+      });
+
+      const res = await request(app.getHttpServer())
+        .post('/api/v1/sessions/sess-1/commit?wait=false')
+        .expect(201);
+
+      expect(res.body.status).toBe('ok');
+      expect(res.body.result.session_id).toBe('sess-1');
       expect(res.body.result.task_id).toBe('task-abc');
-      expect(res.body.result.message).toBeDefined();
+      expect(res.body.result.status).toBe('accepted');
+      expect(res.body.result.message).toBe('Commit is processing in the background');
+      expect(sessionService.commitAsync).toHaveBeenCalledTimes(1);
+      expect(sessionService.commit).not.toHaveBeenCalled();
     });
 
     it('should return conflict if commit already in progress', async () => {
@@ -156,7 +198,7 @@ describe('SessionController (HTTP)', () => {
       );
 
       const res = await request(app.getHttpServer())
-        .post('/api/v1/sessions/sess-1/commit')
+        .post('/api/v1/sessions/sess-1/commit?wait=false')
         .expect(201);
 
       expect(res.body.status).toBe('error');

@@ -5,8 +5,11 @@ import {
   Delete,
   Body,
   Param,
+  Query,
   HttpCode,
   HttpStatus,
+  DefaultValuePipe,
+  ParseBoolPipe,
 } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { SessionService, MessagePart } from './session.service';
@@ -90,13 +93,22 @@ export class SessionController {
 
   @Post(':id/commit')
   @ApiOperation({ summary: 'Commit a session (archive + extract memories)' })
-  async commit(@Param('id') id: string, @VikingContext() ctx: RequestContext): Promise<ApiResponse<unknown>> {
+  async commit(
+    @Param('id') id: string,
+    @Query('wait', new DefaultValuePipe(true), ParseBoolPipe) wait: boolean,
+    @VikingContext() ctx: RequestContext,
+  ): Promise<ApiResponse<unknown>> {
     try {
+      if (wait) {
+        const result = await this.sessionService.commit(id, ctx);
+        return okResponse(result);
+      }
+
       const result = await this.sessionService.commitAsync(id, ctx);
       return okResponse({
         session_id: result.session_id,
-        status: result.status,
         task_id: result.task_id,
+        status: result.status,
         message: 'Commit is processing in the background',
       });
     } catch (err) {
