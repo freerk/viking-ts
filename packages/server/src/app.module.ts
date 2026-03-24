@@ -18,6 +18,7 @@ import { SearchModule } from './search/search.module';
 import { TasksModule } from './tasks/tasks.module';
 import { SystemModule } from './system/system.module';
 import { SessionModule } from './session/session.module';
+import { PackModule } from './pack/pack.module';
 import { loadConfig } from './config';
 
 @Module({
@@ -42,6 +43,7 @@ import { loadConfig } from './config';
     TasksModule,
     SystemModule,
     SessionModule,
+    PackModule,
   ],
   providers: [
     {
