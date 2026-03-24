@@ -185,20 +185,49 @@ export class MemoryService {
     limit?: number;
     offset?: number;
   }): Promise<MemoryRecord[]> {
-    let ownerSpace: string | undefined;
-    if (filters.agentId) {
-      // Must use the computed agent space hash, same as createMemory
-      ownerSpace = this.computeAgentSpace(filters.userId, filters.agentId);
-    } else if (filters.userId) {
-      ownerSpace = filters.userId;
-    }
+    // When both userId and agentId are provided, fetch both user-space and agent-space memories
+    // and merge them — matching OpenViking behaviour where a user+agent query returns all
+    // memories belonging to that user (user-space) and that agent (agent-space).
+    let records: Awaited<ReturnType<typeof this.contextVectors.listByContextType>>;
 
-    const records = await this.contextVectors.listByContextType('memory', {
-      accountId: 'default',
-      ownerSpace,
-      limit: filters.limit,
-      offset: filters.offset,
-    });
+    if (filters.agentId && filters.userId && !filters.type) {
+      const agentSpace = this.computeAgentSpace(filters.userId, filters.agentId);
+      const userSpace = filters.userId;
+      const [agentRecords, userRecords] = await Promise.all([
+        this.contextVectors.listByContextType('memory', {
+          accountId: 'default',
+          ownerSpace: agentSpace,
+          limit: filters.limit,
+          offset: filters.offset,
+        }),
+        this.contextVectors.listByContextType('memory', {
+          accountId: 'default',
+          ownerSpace: userSpace,
+          limit: filters.limit,
+          offset: filters.offset,
+        }),
+      ]);
+      // Merge, deduplicate by id
+      const seen = new Set<string>();
+      records = [...agentRecords, ...userRecords].filter((r) => {
+        if (seen.has(r.id)) return false;
+        seen.add(r.id);
+        return true;
+      });
+    } else {
+      let ownerSpace: string | undefined;
+      if (filters.agentId) {
+        ownerSpace = this.computeAgentSpace(filters.userId, filters.agentId);
+      } else if (filters.userId) {
+        ownerSpace = filters.userId;
+      }
+      records = await this.contextVectors.listByContextType('memory', {
+        accountId: 'default',
+        ownerSpace,
+        limit: filters.limit,
+        offset: filters.offset,
+      });
+    }
 
     let filtered = records;
     if (filters.type) {
