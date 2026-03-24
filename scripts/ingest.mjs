@@ -286,21 +286,13 @@ async function ingestIdentity(agent, baseUrl, dryRun, existing) {
       continue;
     }
 
-    const uri = `viking://agent/memories/identity/${fname}`;
-
-    if (memoryExists(existing, agent.id, uri)) {
-      labels.push(`${fname} (exists)`);
-      counters.identity.existed++;
-      continue;
-    }
-
     try {
       await post(baseUrl, '/api/v1/memories', {
         text: content,
         type: 'agent',
         category: 'profile',
         agentId: agent.id,
-        uri,
+        userId: agent.userId,
       }, dryRun);
       labels.push(fname);
       counters.identity.ingested++;
@@ -348,13 +340,6 @@ async function ingestWorkspace(agent, baseUrl, dryRun, existing) {
     }
 
     const label = relative(agent.workspace, file);
-    const uri = `viking://agent/memories/workspace/${basename(file)}`;
-
-    if (memoryExists(existing, agent.id, uri)) {
-      labels.push(`${label} (skipped, exists)`);
-      counters.workspace.existed++;
-      continue;
-    }
 
     try {
       await post(baseUrl, '/api/v1/memories', {
@@ -362,7 +347,7 @@ async function ingestWorkspace(agent, baseUrl, dryRun, existing) {
         type: 'agent',
         category: 'general',
         agentId: agent.id,
-        uri,
+        userId: agent.userId,
       }, dryRun);
       labels.push(`${label} \u2714`);
       counters.workspace.ingested++;
@@ -448,6 +433,7 @@ async function ingestSessions(agent, baseUrl, dryRun) {
       const result = await post(baseUrl, '/api/v1/sessions/capture', {
         messages,
         agentId: agent.id,
+        userId: agent.userId,
       }, dryRun);
       const count = dryRun ? '?' : (result.result?.memories?.length ?? 0);
       console.log(`    + ${file} -> ${count} memories (${messages.length} msgs)`);
@@ -700,6 +686,8 @@ async function main() {
 
   // Per-agent ingestion
   for (const agent of agents) {
+    // Attach userId so ingestion functions can include it in memory POSTs
+    agent.userId = userId;
     console.log(`\n--- Agent: ${agent.id} ---`);
 
     if (!skipIdentity) {
