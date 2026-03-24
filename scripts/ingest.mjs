@@ -577,10 +577,12 @@ async function ingestSkills(dirs, baseUrl, dryRun, existing) {
 
       try {
         await post(baseUrl, '/api/v1/skills', {
-          name,
-          description,
-          content,
-          tags,
+          data: {
+            name,
+            description,
+            content,
+            tags,
+          },
         }, dryRun);
         console.log(`    + ${name}`);
         counters.skills.ingested++;

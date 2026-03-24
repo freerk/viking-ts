@@ -60,7 +60,65 @@ describe('SkillController', () => {
   });
 
   describe('POST /api/v1/skills', () => {
-    it('should create a skill and return 201', async () => {
+    it('should create a skill via data wrapper and return 201', async () => {
+      const skill = makeSkillRecord();
+      mockService.createSkill.mockResolvedValue(skill);
+
+      const res = await request(app.getHttpServer())
+        .post('/api/v1/skills')
+        .send({
+          data: {
+            name: 'test-skill',
+            description: 'A test skill',
+            content: 'Full content',
+            tags: ['test'],
+          },
+        })
+        .expect(201);
+
+      expect(res.body.status).toBe('ok');
+      expect(res.body.result.name).toBe('test-skill');
+      expect(res.body.time).toBeDefined();
+      expect(mockService.createSkill).toHaveBeenCalledWith({
+        name: 'test-skill',
+        description: 'A test skill',
+        content: 'Full content',
+        tags: ['test'],
+      });
+    });
+
+    it('should auto-convert MCP tool format via data wrapper', async () => {
+      const skill = makeSkillRecord({ name: 'search-web' });
+      mockService.createSkill.mockResolvedValue(skill);
+
+      const res = await request(app.getHttpServer())
+        .post('/api/v1/skills')
+        .send({
+          data: {
+            name: 'search_web',
+            description: 'Search the web',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                query: { type: 'string', description: 'Search query' },
+                limit: { type: 'number', description: 'Max results' },
+              },
+              required: ['query'],
+            },
+          },
+        })
+        .expect(201);
+
+      expect(res.body.status).toBe('ok');
+      const call = mockService.createSkill.mock.calls[0][0];
+      expect(call.name).toBe('search-web');
+      expect(call.description).toBe('Search the web');
+      expect(call.content).toContain('# search-web');
+      expect(call.content).toContain('**query** (string) (required)');
+      expect(call.content).toContain('**limit** (number) (optional)');
+    });
+
+    it('should accept legacy direct shape (backward compat)', async () => {
       const skill = makeSkillRecord();
       mockService.createSkill.mockResolvedValue(skill);
 
@@ -76,10 +134,22 @@ describe('SkillController', () => {
 
       expect(res.body.status).toBe('ok');
       expect(res.body.result.name).toBe('test-skill');
-      expect(res.body.time).toBeDefined();
+      expect(mockService.createSkill).toHaveBeenCalledWith({
+        name: 'test-skill',
+        description: 'A test skill',
+        content: 'Full content',
+        tags: ['test'],
+      });
     });
 
-    it('should reject missing required fields', async () => {
+    it('should reject missing both data and name+content', async () => {
+      await request(app.getHttpServer())
+        .post('/api/v1/skills')
+        .send({})
+        .expect(400);
+    });
+
+    it('should reject name without content (legacy shape)', async () => {
       await request(app.getHttpServer())
         .post('/api/v1/skills')
         .send({ name: 'only-name' })
@@ -96,6 +166,51 @@ describe('SkillController', () => {
           unknownField: 'bad',
         })
         .expect(400);
+    });
+
+    it('should convert MCP snake_case name to kebab-case', async () => {
+      const skill = makeSkillRecord({ name: 'search-web' });
+      mockService.createSkill.mockResolvedValue(skill);
+
+      await request(app.getHttpServer())
+        .post('/api/v1/skills')
+        .send({
+          data: {
+            name: 'search_web',
+            description: 'Search',
+            inputSchema: { type: 'object', properties: {} },
+          },
+        })
+        .expect(201);
+
+      const call = mockService.createSkill.mock.calls[0][0];
+      expect(call.name).toBe('search-web');
+    });
+
+    it('should include required annotation in MCP parameter markdown', async () => {
+      const skill = makeSkillRecord();
+      mockService.createSkill.mockResolvedValue(skill);
+
+      await request(app.getHttpServer())
+        .post('/api/v1/skills')
+        .send({
+          data: {
+            name: 'tool',
+            description: 'A tool',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                url: { type: 'string', description: 'Target URL' },
+              },
+              required: ['url'],
+            },
+          },
+        })
+        .expect(201);
+
+      const call = mockService.createSkill.mock.calls[0][0];
+      expect(call.content).toContain('(required)');
+      expect(call.content).toContain('**url** (string) (required): Target URL');
     });
   });
 

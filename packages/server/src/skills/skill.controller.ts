@@ -8,16 +8,18 @@ import {
   Query,
   HttpCode,
   HttpStatus,
+  BadRequestException,
 } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { SkillService } from './skill.service';
 import {
-  CreateSkillDto,
+  AddSkillDto,
   SearchSkillsQueryDto,
   ListSkillsQueryDto,
 } from './skill.dto';
 import { okResponse } from '../shared/api-response.helper';
 import { ApiResponse, SkillRecord, SearchResult } from '../shared/types';
+import { isMcpFormat, mcpToSkill, McpToolInput } from './mcp-converter';
 
 @ApiTags('skills')
 @Controller('api/v1/skills')
@@ -27,14 +29,35 @@ export class SkillController {
   @Post()
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: 'Create a new skill' })
-  async create(@Body() dto: CreateSkillDto): Promise<ApiResponse<SkillRecord>> {
+  async create(@Body() dto: AddSkillDto): Promise<ApiResponse<SkillRecord>> {
     const startTime = Date.now();
-    const skill = await this.skillService.createSkill({
-      name: dto.name,
-      description: dto.description,
-      content: dto.content,
-      tags: dto.tags,
-    });
+
+    let skillInput: { name: string; description: string; content: string; tags?: string[] };
+
+    if (dto.data !== undefined) {
+      if (isMcpFormat(dto.data)) {
+        skillInput = mcpToSkill(dto.data as McpToolInput);
+      } else {
+        const d = dto.data as Record<string, unknown>;
+        skillInput = {
+          name: d.name as string,
+          description: (d.description as string) ?? '',
+          content: (d.content as string) ?? '',
+          tags: d.tags as string[] | undefined,
+        };
+      }
+    } else if (dto.name && dto.content) {
+      skillInput = {
+        name: dto.name,
+        description: dto.description ?? '',
+        content: dto.content,
+        tags: dto.tags,
+      };
+    } else {
+      throw new BadRequestException('Either data or name+content is required');
+    }
+
+    const skill = await this.skillService.createSkill(skillInput);
     return okResponse(skill, startTime);
   }
 
