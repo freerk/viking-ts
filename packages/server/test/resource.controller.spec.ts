@@ -4,9 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import request from 'supertest';
 import { ResourceController } from '../src/resource/resource.controller';
 import { ResourceService } from '../src/resource/resource.service';
-import { VfsService } from '../src/storage/vfs.service';
-import { EmbeddingQueueService } from '../src/queue/embedding-queue.service';
-import { SemanticQueueService } from '../src/queue/semantic-queue.service';
+
 import { ResourceRecord } from '../src/shared/types';
 
 function makeResourceRecord(overrides: Partial<ResourceRecord> = {}): ResourceRecord {
@@ -27,9 +25,7 @@ function makeResourceRecord(overrides: Partial<ResourceRecord> = {}): ResourceRe
 describe('ResourceController (HTTP)', () => {
   let app: INestApplication;
   let resourceService: Partial<Record<keyof ResourceService, jest.Mock>>;
-  let vfsService: Partial<Record<'writeFile' | 'readFile' | 'exists', jest.Mock>>;
-  let embeddingQueue: Partial<Record<'enqueue', jest.Mock>>;
-  let semanticQueue: Partial<Record<'enqueue', jest.Mock>>;
+
 
   beforeEach(async () => {
     resourceService = {
@@ -41,23 +37,11 @@ describe('ResourceController (HTTP)', () => {
       deleteResource: jest.fn(),
     };
 
-    vfsService = {
-      writeFile: jest.fn().mockResolvedValue({ uri: 'viking://resources/test.md' }),
-      readFile: jest.fn().mockResolvedValue('content'),
-      exists: jest.fn().mockResolvedValue(false),
-    };
-
-    embeddingQueue = { enqueue: jest.fn() };
-    semanticQueue = { enqueue: jest.fn() };
-
     const module: TestingModule = await Test.createTestingModule({
       controllers: [ResourceController],
       providers: [
         { provide: ResourceService, useValue: resourceService },
         { provide: ConfigService, useValue: { get: () => '/tmp/viking-test' } },
-        { provide: VfsService, useValue: vfsService },
-        { provide: EmbeddingQueueService, useValue: embeddingQueue },
-        { provide: SemanticQueueService, useValue: semanticQueue },
       ],
     }).compile();
 
@@ -90,29 +74,6 @@ describe('ResourceController (HTTP)', () => {
       await request(app.getHttpServer())
         .post('/api/v1/resources')
         .send({ path: '/tmp/test.md', to: 'viking://resources/a.md', parent: 'viking://resources' })
-        .expect(400);
-    });
-  });
-
-  describe('POST /api/v1/skills', () => {
-    it('should create a skill from data string', async () => {
-      const response = await request(app.getHttpServer())
-        .post('/api/v1/skills')
-        .send({ data: '# My Skill\nDo something cool' })
-        .expect(201);
-
-      expect(response.body.status).toBe('ok');
-      expect(response.body.result.uri).toContain('viking://agent/skills/');
-      expect(response.body.result.status).toBe('accepted');
-      expect(vfsService.writeFile).toHaveBeenCalled();
-      expect(embeddingQueue.enqueue).toHaveBeenCalled();
-      expect(semanticQueue.enqueue).toHaveBeenCalled();
-    });
-
-    it('should return 400 when no data or temp_path', async () => {
-      await request(app.getHttpServer())
-        .post('/api/v1/skills')
-        .send({})
         .expect(400);
     });
   });

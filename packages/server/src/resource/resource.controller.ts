@@ -20,16 +20,8 @@ import { ResourceService } from './resource.service';
 import { AddResourceDto, CreateResourceDto, SearchResourcesQueryDto } from './resource.dto';
 import { okResponse } from '../shared/api-response.helper';
 import { ApiResponse, ResourceRecord, SearchResult } from '../shared/types';
-import { VfsService } from '../storage/vfs.service';
-import { EmbeddingQueueService } from '../queue/embedding-queue.service';
-import { SemanticQueueService } from '../queue/semantic-queue.service';
 
-interface AddSkillBody {
-  data?: unknown;
-  temp_path?: string;
-  wait?: boolean;
-  timeout?: number;
-}
+
 
 @ApiTags('resources')
 @Controller('api/v1')
@@ -39,9 +31,6 @@ export class ResourceController {
   constructor(
     private readonly resourceService: ResourceService,
     private readonly config: ConfigService,
-    private readonly vfs: VfsService,
-    private readonly embeddingQueue: EmbeddingQueueService,
-    private readonly semanticQueue: SemanticQueueService,
   ) {
     const storagePath = this.config.get<string>('storage.path', '~/.viking-ts/data');
     this.tmpDir = join(storagePath, '..', 'tmp');
@@ -116,63 +105,6 @@ export class ResourceController {
       root_uri: result.root_uri,
       source_path: result.source_path,
       errors: result.errors,
-    });
-  }
-
-  @Post('skills')
-  @ApiOperation({ summary: 'Add skill to Viking (OpenViking-compatible)' })
-  async addSkill(
-    @Body() body: AddSkillBody,
-  ): Promise<ApiResponse<unknown>> {
-    let content: string;
-    let skillName: string;
-
-    if (body.temp_path) {
-      try {
-        const { readFileSync: readFs } = await import('fs');
-        content = readFs(body.temp_path, 'utf-8');
-        skillName = body.temp_path.split('/').pop()?.replace(/\.[^.]+$/, '') ?? 'skill';
-      } catch {
-        throw new BadRequestException(`Cannot read file: ${body.temp_path}`);
-      }
-    } else if (body.data !== undefined && body.data !== null) {
-      content = typeof body.data === 'string'
-        ? body.data
-        : JSON.stringify(body.data, null, 2);
-      skillName = 'skill';
-    } else {
-      throw new BadRequestException("Either 'data' or 'temp_path' must be provided");
-    }
-
-    const targetUri = `viking://agent/skills/${skillName}/`;
-
-    await this.vfs.writeFile(targetUri, content);
-
-    const parentUri = 'viking://agent/skills';
-    const abstract = content.slice(0, 256);
-
-    this.embeddingQueue.enqueue({
-      uri: targetUri,
-      text: content,
-      contextType: 'skill',
-      level: 2,
-      abstract,
-      name: `${skillName}.md`,
-      parentUri,
-      accountId: 'default',
-      ownerSpace: 'default',
-    });
-
-    this.semanticQueue.enqueue({
-      uri: parentUri,
-      contextType: 'skill',
-      accountId: 'default',
-      ownerSpace: 'default',
-    });
-
-    return okResponse({
-      uri: targetUri,
-      status: body.wait ? 'ok' : 'accepted',
     });
   }
 

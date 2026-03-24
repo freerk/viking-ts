@@ -57,7 +57,9 @@ export class EmbeddingQueueService implements OnModuleInit, OnModuleDestroy {
 
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
       try {
-        embedding = await this.embeddingService.embed(job.text);
+        // Truncate to ~6000 chars to stay within embedding model context limits
+        const textToEmbed = job.text.length > 6000 ? job.text.slice(0, 6000) : job.text;
+        embedding = await this.embeddingService.embed(textToEmbed);
         break;
       } catch (err) {
         this.logger.warn(
