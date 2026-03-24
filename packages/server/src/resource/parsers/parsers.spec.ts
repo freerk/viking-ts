@@ -56,9 +56,7 @@ jest.mock('xlsx', () => ({
 
 jest.mock('officeparser', () => ({
   OfficeParser: {
-    parseOffice: jest.fn().mockResolvedValue({
-      toText: jest.fn().mockReturnValue('Slide 1: Title\nSlide 2: Content'),
-    }),
+    parseOffice: jest.fn().mockResolvedValue('Slide 1: Title\nSlide 2: Content'),
   },
 }));
 
