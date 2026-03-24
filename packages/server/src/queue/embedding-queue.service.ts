@@ -13,6 +13,8 @@ export interface EmbeddingJob {
   parentUri: string | null;
   accountId: string;
   ownerSpace: string;
+  description?: string;
+  tags?: string;
 }
 
 const MAX_RETRIES = 3;
@@ -81,6 +83,8 @@ export class EmbeddingQueueService implements OnModuleInit, OnModuleDestroy {
       accountId: job.accountId,
       ownerSpace: job.ownerSpace,
       embedding,
+      ...(job.description ? { description: job.description } : {}),
+      ...(job.tags ? { tags: job.tags } : {}),
     });
 
     this.logger.debug(`Embedding job complete: ${job.uri} (vector=${embedding !== null})`);

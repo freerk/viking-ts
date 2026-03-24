@@ -150,7 +150,19 @@ export class ResourceService {
   ): Promise<void> {
     await this.vfs.writeFile(uri, content);
 
-    const l0Abstract = (reason && reason.length <= 256) ? reason : content.slice(0, 256);
+    let l0Abstract = (reason && reason.length <= 256) ? reason : content.slice(0, 256);
+    let l1Overview = '';
+
+    if (this.llmService?.isConfigured()) {
+      try {
+        const l0l1 = await this.llmService.generateContextL0L1(name, content, 'resource');
+        l0Abstract = l0l1.abstract || l0Abstract;
+        l1Overview = l0l1.overview;
+      } catch (err) {
+        this.logger.warn(`L0/L1 generation failed for ${uri}, using fallback: ${String(err)}`);
+      }
+    }
+
     const parentUri = uri.substring(0, uri.lastIndexOf('/')) || 'viking://resources';
 
     if (this.embeddingQueue) {
@@ -164,6 +176,7 @@ export class ResourceService {
         parentUri,
         accountId: 'default',
         ownerSpace: '',
+        description: l1Overview || undefined,
       });
     } else {
       let embedding: number[] | null = null;
@@ -179,6 +192,7 @@ export class ResourceService {
         level: 2,
         abstract: l0Abstract,
         name,
+        description: l1Overview || undefined,
         accountId: 'default',
         embedding,
       });
@@ -370,7 +384,19 @@ export class ResourceService {
 
     await this.vfs.writeFile(uri, content);
 
-    const l0Abstract = content.slice(0, 256);
+    let l0Abstract = content.slice(0, 256);
+    let l1Overview = '';
+
+    if (this.llmService?.isConfigured()) {
+      try {
+        const l0l1 = await this.llmService.generateContextL0L1(title, content, 'resource');
+        l0Abstract = l0l1.abstract || l0Abstract;
+        l1Overview = l0l1.overview;
+      } catch (err) {
+        this.logger.warn(`L0/L1 generation failed for resource ${id}, using fallback: ${String(err)}`);
+      }
+    }
+
     const cvId = ContextVectorService.generateId('default', uri);
 
     if (this.embeddingQueue) {
@@ -384,6 +410,7 @@ export class ResourceService {
         parentUri,
         accountId: 'default',
         ownerSpace: '',
+        description: l1Overview || undefined,
       });
     } else {
       let embedding: number[] | null = null;
@@ -399,6 +426,7 @@ export class ResourceService {
         level: 2,
         abstract: l0Abstract,
         name: title,
+        description: l1Overview || undefined,
         accountId: 'default',
         embedding,
       });
@@ -419,7 +447,7 @@ export class ResourceService {
       uri,
       sourceUrl: params.url,
       l0Abstract,
-      l1Overview: '',
+      l1Overview,
       l2Content: content,
       createdAt: now,
       updatedAt: now,

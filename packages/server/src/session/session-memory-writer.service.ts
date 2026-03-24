@@ -150,6 +150,8 @@ export class SessionMemoryWriterService {
       parentUri,
       ownerSpace,
       accountId: ctx.user.accountId,
+      description: candidate.overview || undefined,
+      tags: candidate.category,
     });
 
     this.logger.log(`Wrote profile memory: ${uri}`);
@@ -185,6 +187,8 @@ export class SessionMemoryWriterService {
       parentUri,
       ownerSpace,
       accountId: ctx.user.accountId,
+      description: candidate.overview || undefined,
+      tags: candidate.category,
     });
 
     this.logger.log(`Wrote ${candidate.category} memory: ${uri}`);
@@ -258,6 +262,8 @@ export class SessionMemoryWriterService {
     parentUri: string;
     ownerSpace: string;
     accountId: string;
+    description?: string;
+    tags?: string;
   }): void {
     this.embeddingQueue.enqueue({
       uri: params.uri,
@@ -269,6 +275,8 @@ export class SessionMemoryWriterService {
       parentUri: params.parentUri,
       accountId: params.accountId,
       ownerSpace: params.ownerSpace,
+      ...(params.description ? { description: params.description } : {}),
+      ...(params.tags ? { tags: params.tags } : {}),
     });
   }
 

@@ -106,6 +106,133 @@ Total length: 400-800 words`;
 }
 
 /**
+ * Source: parsing/context_generation.yaml (v4.0.0)
+ */
+export function contextGenerationPrompt(
+  title: string,
+  content: string,
+  contextType: 'resource' | 'memory' | 'skill' = 'resource',
+  _isLeaf: boolean = false,
+  childrenInfo?: string,
+  instruction?: string,
+): string {
+  const childrenSection = childrenInfo ?? '';
+  const instructionSection = instruction ?? '';
+
+  let abstractGuidance: string;
+  if (contextType === 'resource') {
+    abstractGuidance = `- Introduce the document's genre, length, and content scope
+    - Retain the most core concepts or other subject keywords`;
+  } else if (contextType === 'memory') {
+    abstractGuidance = `- Summarize key subjects, processes, and conclusions
+    - Retain the most core concepts or other subject keywords`;
+  } else if (contextType === 'skill') {
+    abstractGuidance = `- Introduce the skill's functionality and parameter scope
+    - Must include: skill name, API name, action verbs`;
+  } else {
+    abstractGuidance = `- Include core terms/concept names from the content
+    - Write in a form that can be matched by user search queries`;
+  }
+
+  let overviewGuidance: string;
+  if (contextType === 'resource') {
+    overviewGuidance = `- What it is: Type of material/document
+    - What it covers: Core knowledge points
+    - When to use: When this type of knowledge needs to be consulted
+    - How to use: How to reference and cite
+    - What it's for: What problems it can solve
+    - Content outline or synopsis: Describe the main content and structure of the document in detail according to its main content and structure, including information about each chapter, etc.`;
+  } else if (contextType === 'memory') {
+    overviewGuidance = `- What it is: Type of experience/memory
+    - What it covers: What happened, what was learned
+    - When to use: When similar scenarios recur
+    - How to use: As experience reference
+    - What it's for: Avoid repeating mistakes/reuse successful experiences`;
+  } else if (contextType === 'skill') {
+    overviewGuidance = `- What it is: Type of skill
+    - What it covers: Specific functions and parameters
+    - When to use: When certain operations need to be performed
+    - How to use: Calling method and parameters
+    - What it's for: What functionality it implements`;
+  } else {
+    overviewGuidance = `- What it is: Type and nature of content
+    - What it covers: Specific points
+    - When to use: Usage scenarios
+    - How to use: Usage methods
+    - What it's for: Value and purpose`;
+  }
+
+  return `Please analyze the input document content and generate semantic titles, abstracts (L0)/overviews (L1) for retrieval, which will be used for semantic search matching with user queries.
+
+Input:
+
+[Title or Filename]
+${title}
+
+[Original Content]
+${content}
+
+[Sub-chapters (if any)]
+${childrenSection}
+
+[Outer Processing Instructions, consider as appropriate]
+${instructionSection}
+
+Output Requirements:
+
+1. semantic_title (10-30 characters):
+   - Semantic title that reflects the core theme
+   - Include the most important keywords/concept names
+   - Not recommended to keep prefixes like "Chapter X"
+
+2. abstract (recommended length < 200 tokens): Summarize in one sentence what the document is mainly about
+   ${abstractGuidance}
+
+3. overview (recommended length < 2000 tokens): Can include multiple paragraphs, describing document content in detail to present the content outline and core viewpoints to the outside world
+   ${overviewGuidance}
+
+You are required to output valid JSON directly. Double quotes in strings within the JSON must be escaped to protect JSON syntax validity. Format:
+{"semantic_title":"title","abstract":"abstract","overview":"overview"}`;
+}
+
+/**
+ * Source: skill/overview_generation.yaml (v1.0.0)
+ */
+export function skillOverviewPrompt(
+  skillName: string,
+  skillDescription: string,
+  skillContent: string,
+): string {
+  return `Please extract key information from the following Skill's complete content and generate a concise overview.
+
+## Skill Information
+
+**Name**: ${skillName}
+**Description**: ${skillDescription}
+
+## Complete Content
+
+${skillContent}
+
+## Task
+
+Extract from the above content:
+1. **When to use** (usage scenarios, trigger conditions)
+2. **How to use** (main functions, core operations)
+3. **Why to use** (what problems it solves)
+4. **Key features** (important tools, methods, best practices)
+
+## Output Requirements
+
+- Concise and clear, don't copy the original text
+- Highlight key information relevant to retrieval
+- Avoid excessive code details
+- Moderate length (no more than 1000 tokens)
+
+Please output the extracted overview text directly:`;
+}
+
+/**
  * Source: compression/memory_extraction.yaml (v5.2.0)
  */
 export function memoryExtractionPrompt(

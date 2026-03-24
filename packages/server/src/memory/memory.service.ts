@@ -55,6 +55,8 @@ export class MemoryService {
 
   async createMemory(params: {
     text: string;
+    l0Abstract?: string;
+    l1Overview?: string;
     type?: MemoryType;
     category?: MemoryCategory;
     agentId?: string;
@@ -73,7 +75,8 @@ export class MemoryService {
 
     await this.vfs.writeFile(uri, params.text);
 
-    const l0Abstract = params.text.slice(0, 256);
+    const l0Abstract = params.l0Abstract || params.text.slice(0, 256);
+    const l1Overview = params.l1Overview ?? '';
 
     if (this.embeddingQueue) {
       this.embeddingQueue.enqueue({
@@ -86,6 +89,8 @@ export class MemoryService {
         parentUri,
         accountId: 'default',
         ownerSpace,
+        description: l1Overview || undefined,
+        tags: category,
       });
     } else {
       let embedding: number[] | null = null;
@@ -102,6 +107,7 @@ export class MemoryService {
         abstract: l0Abstract,
         name: `${id}.md`,
         tags: category,
+        description: l1Overview || undefined,
         accountId: 'default',
         ownerSpace,
         embedding,
@@ -126,7 +132,7 @@ export class MemoryService {
       userId: params.userId,
       uri,
       l0Abstract,
-      l1Overview: '',
+      l1Overview,
       l2Content: params.text,
       createdAt: now,
       updatedAt: now,

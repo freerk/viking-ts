@@ -4,6 +4,7 @@ import { ContextVectorService } from '../storage/context-vector.service';
 import { EmbeddingService } from '../embedding/embedding.service';
 import { EmbeddingQueueService } from '../queue/embedding-queue.service';
 import { SemanticQueueService } from '../queue/semantic-queue.service';
+import { LlmService } from '../llm/llm.service';
 import { SkillRecord, SearchResult } from '../shared/types';
 
 @Injectable()
@@ -16,6 +17,7 @@ export class SkillService {
     private readonly embeddingService: EmbeddingService,
     @Optional() private readonly embeddingQueue?: EmbeddingQueueService,
     @Optional() private readonly semanticQueue?: SemanticQueueService,
+    @Optional() private readonly llmService?: LlmService,
   ) {}
 
   async createSkill(params: {
@@ -31,7 +33,39 @@ export class SkillService {
 
     await this.vfs.writeFile(uri, params.content);
 
-    const l0Abstract = params.content.slice(0, 256);
+    let l0Abstract = params.content.slice(0, 256);
+    let l1Overview = '';
+
+    if (this.llmService?.isConfigured()) {
+      try {
+        const overview = await this.llmService.generateSkillOverview(
+          params.name,
+          params.description,
+          params.content,
+        );
+        if (overview) {
+          l1Overview = overview;
+        }
+      } catch (err) {
+        this.logger.warn(`Skill overview generation failed for "${params.name}", using fallback: ${String(err)}`);
+      }
+
+      try {
+        const l0l1 = await this.llmService.generateContextL0L1(
+          params.name,
+          params.content,
+          'skill',
+        );
+        l0Abstract = l0l1.abstract || l0Abstract;
+        if (!l1Overview) {
+          l1Overview = l0l1.overview;
+        }
+      } catch (err) {
+        this.logger.warn(`L0/L1 generation failed for skill "${params.name}": ${String(err)}`);
+      }
+    }
+
+    const skillDescription = l1Overview || params.description;
     const cvId = ContextVectorService.generateId('default', uri);
 
     if (this.embeddingQueue) {
@@ -45,6 +79,8 @@ export class SkillService {
         parentUri,
         accountId: 'default',
         ownerSpace: 'default',
+        description: skillDescription || undefined,
+        tags: tags.join(',') || undefined,
       });
     } else {
       let embedding: number[] | null = null;
@@ -60,7 +96,7 @@ export class SkillService {
         level: 2,
         abstract: l0Abstract,
         name: params.name,
-        description: params.description,
+        description: skillDescription,
         tags: tags.join(','),
         accountId: 'default',
         embedding,
@@ -83,7 +119,7 @@ export class SkillService {
       uri,
       tags,
       l0Abstract,
-      l1Overview: '',
+      l1Overview,
       l2Content: params.content,
       createdAt: now,
       updatedAt: now,

@@ -38,7 +38,11 @@ describe('ResourceService', () => {
   const mockEmbeddingService = { embed: jest.fn().mockResolvedValue([0.1, 0.2]) };
   const mockEmbeddingQueue = { enqueue: jest.fn() };
   const mockSemanticQueue = { enqueue: jest.fn() };
-  const mockLlmService = { describeImage: jest.fn().mockResolvedValue('image description') };
+  const mockLlmService = {
+    describeImage: jest.fn().mockResolvedValue('image description'),
+    isConfigured: jest.fn().mockReturnValue(false),
+    generateContextL0L1: jest.fn().mockResolvedValue({ abstract: '', overview: '', semanticTitle: '' }),
+  };
   const mockConfig = {
     get: jest.fn().mockImplementation((key: string, defaultVal?: string) => {
       const map: Record<string, string> = {

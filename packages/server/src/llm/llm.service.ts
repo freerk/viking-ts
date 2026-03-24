@@ -11,6 +11,8 @@ import {
   dedupDecisionPrompt,
   intentAnalysisPrompt,
   archiveSummaryPrompt,
+  contextGenerationPrompt,
+  skillOverviewPrompt,
 } from './prompts';
 
 const DOCUMENT_EXTENSIONS = new Set(['.md', '.txt', '.rst', '.adoc', '.tex']);
@@ -490,6 +492,64 @@ export class LlmService implements OnModuleInit {
     return this.parseQueryPlanResponse(response);
   }
 
+  async generateContextL0L1(
+    title: string,
+    content: string,
+    contextType: 'resource' | 'memory' | 'skill' = 'resource',
+    isLeaf: boolean = true,
+  ): Promise<{ abstract: string; overview: string; semanticTitle: string }> {
+    const capped = content.slice(0, 30_000);
+    const prompt = contextGenerationPrompt(title, capped, contextType, isLeaf);
+
+    try {
+      const response = await this.complete(
+        'You analyze documents and generate semantic metadata. Return only valid JSON. No markdown fences, no explanation.',
+        prompt,
+        2048,
+      );
+
+      const cleaned = response.replace(/```json?\n?/g, '').replace(/```/g, '').trim();
+      const data: unknown = JSON.parse(cleaned);
+
+      if (typeof data === 'object' && data !== null) {
+        const obj = data as Record<string, unknown>;
+        return {
+          semanticTitle: String(obj['semantic_title'] ?? title),
+          abstract: String(obj['abstract'] ?? content.slice(0, 256)),
+          overview: String(obj['overview'] ?? ''),
+        };
+      }
+    } catch (err) {
+      this.logger.warn(`Context L0/L1 generation failed for "${title}": ${String(err)}`);
+    }
+
+    return {
+      semanticTitle: title,
+      abstract: content.slice(0, 256),
+      overview: '',
+    };
+  }
+
+  async generateSkillOverview(
+    skillName: string,
+    skillDescription: string,
+    skillContent: string,
+  ): Promise<string> {
+    const capped = skillContent.slice(0, 30_000);
+    const prompt = skillOverviewPrompt(skillName, skillDescription, capped);
+
+    try {
+      return await this.complete(
+        'You extract key information from skills. Follow the instructions in the user message exactly.',
+        prompt,
+        1024,
+      );
+    } catch (err) {
+      this.logger.warn(`Skill overview generation failed for "${skillName}": ${String(err)}`);
+      return '';
+    }
+  }
+
   async extractMemories(
     messages: Array<{ role: string; content: string }>,
   ): Promise<Array<{ text: string; category: string }>> {
@@ -581,7 +641,28 @@ ${conversationText}
 
       if (!abstract && !content) continue;
 
-      candidates.push({ category, abstract, overview, content });
+      const candidate: CandidateMemory = { category, abstract, overview, content };
+
+      if (category === 'tools') {
+        const toolName = typeof entry['tool_name'] === 'string' ? entry['tool_name'] : undefined;
+        if (toolName) candidate.toolName = toolName;
+        if (typeof entry['best_for'] === 'string') candidate.bestFor = entry['best_for'];
+        if (typeof entry['optimal_params'] === 'string') candidate.optimalParams = entry['optimal_params'];
+        if (typeof entry['common_failures'] === 'string') candidate.commonFailures = entry['common_failures'];
+        if (typeof entry['recommendation'] === 'string') candidate.recommendation = entry['recommendation'];
+      }
+
+      if (category === 'skills') {
+        const skillName = typeof entry['skill_name'] === 'string' ? entry['skill_name'] : undefined;
+        if (skillName) candidate.skillName = skillName;
+        if (typeof entry['best_for'] === 'string') candidate.bestFor = entry['best_for'];
+        if (typeof entry['recommended_flow'] === 'string') candidate.recommendedFlow = entry['recommended_flow'];
+        if (typeof entry['key_dependencies'] === 'string') candidate.keyDependencies = entry['key_dependencies'];
+        if (typeof entry['common_failures'] === 'string') candidate.commonFailures = entry['common_failures'];
+        if (typeof entry['recommendation'] === 'string') candidate.recommendation = entry['recommendation'];
+      }
+
+      candidates.push(candidate);
     }
 
     this.logger.log(`Extracted ${candidates.length} candidate memories`);
