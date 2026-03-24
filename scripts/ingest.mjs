@@ -17,6 +17,15 @@ const HOME = homedir();
 const DELAY_MS = 200;
 const IDENTITY_FILES = ['SOUL.md', 'IDENTITY.md', 'AGENTS.md', 'USER.md'];
 
+// Extensions walkable as text resources (server handles parsing of binary formats)
+const RESOURCE_EXTENSIONS = [
+  '.md', '.txt', '.rst', '.adoc',
+  '.ts', '.js', '.mjs', '.cjs', '.py', '.go', '.java', '.rs', '.rb', '.php', '.cs', '.cpp', '.c', '.h',
+  '.json', '.yaml', '.yml', '.toml', '.ini',
+  '.html', '.htm',
+  '.pdf', '.docx', '.doc', '.xlsx', '.xls', '.csv', '.pptx', '.ppt',
+];
+
 const counters = {
   identity: { ingested: 0, skipped: 0, existed: 0, errors: 0 },
   workspace: { ingested: 0, skipped: 0, existed: 0, errors: 0 },
@@ -89,6 +98,7 @@ Options:
   --force                 Skip dedup checks, re-ingest everything (default: idempotent)
   --resources <dir>       Ingest directory as resources (repeatable)
   --resource-prefix <p>   URI prefix for --resources (default: viking://resources/<dirname>)
+  --no-binary             Skip binary files (PDF, DOCX, XLSX, PPTX) when ingesting resources
   --skills <dir>          Ingest directory of SKILL.md files into /api/v1/skills (repeatable)
   --sync-skills           Delete skills in viking-ts that no longer exist on disk
   --base-url <url>        Server URL (default: http://localhost:1934)
@@ -460,20 +470,17 @@ async function ingestResources(dirs, resourcePrefix, baseUrl, dryRun, existing) 
 
     console.log(`\n  Resources from ${resolvedDir} (prefix: ${prefix})...`);
 
-    const files = walkFiles(resolvedDir);
-    for (const file of files) {
-      let content;
-      try {
-        content = readFile(file);
-      } catch {
-        counters.resources.skipped++;
-        continue;
-      }
-      if (!content || content.length < 20) {
-        counters.resources.skipped++;
-        continue;
-      }
+    const TEXT_EXTS = new Set([
+      '.md', '.txt', '.rst', '.adoc',
+      '.ts', '.js', '.mjs', '.cjs', '.py', '.go', '.java', '.rs', '.rb', '.php', '.cs', '.cpp', '.c', '.h',
+      '.json', '.yaml', '.yml', '.toml', '.ini', '.html', '.htm',
+    ]);
+    const BINARY_EXTS = new Set(['.pdf', '.docx', '.doc', '.xlsx', '.xls', '.csv', '.pptx', '.ppt']);
 
+    const files = walkFiles(resolvedDir, RESOURCE_EXTENSIONS);
+    for (const file of files) {
+      const ext = file.slice(file.lastIndexOf('.')).toLowerCase();
+      const isBinary = BINARY_EXTS.has(ext);
       const relPath = relative(resolvedDir, file);
       const uri = `${prefix}/${relPath}`;
 
@@ -483,13 +490,28 @@ async function ingestResources(dirs, resourcePrefix, baseUrl, dryRun, existing) 
         continue;
       }
 
+      let body;
+      if (isBinary) {
+        // Send file path — server parses binary format
+        body = { path: file, to: uri, reason: `resource from ${relPath}` };
+      } else {
+        let content;
+        try {
+          content = readFile(file);
+        } catch {
+          counters.resources.skipped++;
+          continue;
+        }
+        if (!content || content.length < 20) {
+          counters.resources.skipped++;
+          continue;
+        }
+        body = { text: content, to: uri, reason: `resource from ${relPath}` };
+      }
+
       try {
-        await post(baseUrl, '/api/v1/resources', {
-          text: content,
-          to: uri,
-          reason: `resource from ${relPath}`,
-        }, dryRun);
-        console.log(`    + ${relPath}`);
+        await post(baseUrl, '/api/v1/resources', body, dryRun);
+        console.log(`    + ${relPath}${isBinary ? ` [${ext.slice(1)}]` : ''}`);
         counters.resources.ingested++;
       } catch (e) {
         console.error(`    x ${relPath}: ${e.message}`);
