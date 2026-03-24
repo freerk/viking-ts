@@ -223,7 +223,7 @@ async function fetchExistingUris(baseUrl, force, dryRun) {
   console.log('  Fetching existing items for dedup...');
 
   try {
-    const memRes = await httpGet(baseUrl, '/api/v1/memories?limit=5000');
+    const memRes = await httpGet(baseUrl, '/api/v1/memories?limit=1000');
     const memories = memRes.result ?? memRes.data ?? [];
     for (const m of memories) {
       if (m.uri) {
@@ -248,7 +248,7 @@ async function fetchExistingUris(baseUrl, force, dryRun) {
   }
 
   try {
-    const resRes = await httpGet(baseUrl, '/api/v1/resources?limit=5000');
+    const resRes = await httpGet(baseUrl, '/api/v1/resources?limit=1000');
     const resources = resRes.result ?? resRes.data ?? [];
     for (const r of resources) {
       if (r.uri) existing.resources.add(r.uri);
