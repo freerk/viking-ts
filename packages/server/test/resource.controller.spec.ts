@@ -97,7 +97,7 @@ describe('ResourceController (HTTP)', () => {
         .expect(201);
 
       expect(response.body.status).toBe('ok');
-      expect(response.body.result.uri).toContain('viking://agent/default/skills/');
+      expect(response.body.result.uri).toContain('viking://agent/skills/');
       expect(response.body.result.status).toBe('accepted');
       expect(vfsService.writeFile).toHaveBeenCalled();
       expect(embeddingQueue.enqueue).toHaveBeenCalled();

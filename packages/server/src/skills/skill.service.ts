@@ -25,8 +25,8 @@ export class SkillService {
     tags?: string[];
   }): Promise<SkillRecord> {
     const now = new Date().toISOString();
-    const uri = `viking://agent/default/skills/${params.name}.md`;
-    const parentUri = 'viking://agent/default/skills';
+    const uri = `viking://agent/skills/${params.name}/`;
+    const parentUri = 'viking://agent/skills';
     const tags = params.tags ?? [];
 
     await this.vfs.writeFile(uri, params.content);

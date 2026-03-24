@@ -5,6 +5,7 @@ import { EmbeddingQueueService } from '../queue/embedding-queue.service';
 import { SemanticQueueService } from '../queue/semantic-queue.service';
 import { MemoryDeduplicatorService, DedupOutcome } from './memory-deduplicator.service';
 import { CandidateMemory, MemoryCategory } from './session-extractor.service';
+import { RequestContext } from '../shared/request-context';
 
 /** Category to VFS path mapping, matching OpenViking memory_extractor.py. */
 const CATEGORY_PATH: Record<MemoryCategory, string> = {
@@ -46,20 +47,20 @@ export class SessionMemoryWriterService {
    * go through MemoryDeduplicatorService first.
    * Returns the number of memories successfully written or merged.
    */
-  async writeAll(candidates: ReadonlyArray<CandidateMemory>): Promise<number> {
+  async writeAll(candidates: ReadonlyArray<CandidateMemory>, ctx: RequestContext): Promise<number> {
     let written = 0;
     const affectedDirs = new Set<string>();
 
     for (const candidate of candidates) {
       try {
         if (SINGLE_FILE_CATEGORIES.has(candidate.category)) {
-          const dirUri = await this.writeProfileMemory(candidate);
+          const dirUri = await this.writeProfileMemory(candidate, ctx);
           if (dirUri) {
             affectedDirs.add(dirUri);
             written++;
           }
         } else {
-          const result = await this.writeWithDedup(candidate);
+          const result = await this.writeWithDedup(candidate, ctx);
           if (result.dirUri) {
             affectedDirs.add(result.dirUri);
           }
@@ -75,7 +76,7 @@ export class SessionMemoryWriterService {
     }
 
     for (const dirUri of affectedDirs) {
-      this.enqueueSemanticProcessing(dirUri);
+      this.enqueueSemanticProcessing(dirUri, ctx);
     }
 
     this.logger.log(`Wrote ${written}/${candidates.length} memories`);
@@ -84,21 +85,24 @@ export class SessionMemoryWriterService {
 
   private async writeWithDedup(
     candidate: CandidateMemory,
+    ctx: RequestContext,
   ): Promise<{ outcome: DedupOutcome; dirUri: string | null }> {
-    const accountId = 'default';
-    const ownerSpace = 'default';
+    const accountId = ctx.user.accountId;
+    const ownerSpace = USER_CATEGORIES.has(candidate.category)
+      ? ctx.user.userSpaceName()
+      : ctx.user.agentSpaceName();
 
     const outcome = await this.deduplicator.deduplicate(candidate, accountId, ownerSpace);
 
     if (outcome === 'created') {
-      const dirUri = await this.writeDirectoryFile(candidate);
+      const dirUri = await this.writeDirectoryFile(candidate, ctx);
       return { outcome, dirUri };
     }
 
     if (outcome === 'merged') {
       const spaceBase = USER_CATEGORIES.has(candidate.category)
-        ? 'viking://user/default'
-        : 'viking://agent/default';
+        ? `viking://user/${ctx.user.userSpaceName()}`
+        : `viking://agent/${ctx.user.agentSpaceName()}`;
       const catPath = CATEGORY_PATH[candidate.category];
       const dirUri = `${spaceBase}/${catPath}`;
       return { outcome, dirUri };
@@ -112,10 +116,10 @@ export class SessionMemoryWriterService {
    * For single-file categories (profile): read existing content and append.
    * Bypasses dedup entirely (always merge).
    */
-  private async writeProfileMemory(candidate: CandidateMemory): Promise<string> {
+  private async writeProfileMemory(candidate: CandidateMemory, ctx: RequestContext): Promise<string> {
     const spaceBase = USER_CATEGORIES.has(candidate.category)
-      ? 'viking://user/default'
-      : 'viking://agent/default';
+      ? `viking://user/${ctx.user.userSpaceName()}`
+      : `viking://agent/${ctx.user.agentSpaceName()}`;
 
     const catPath = CATEGORY_PATH[candidate.category];
     const uri = `${spaceBase}/${catPath}`;
@@ -134,13 +138,18 @@ export class SessionMemoryWriterService {
 
     await this.vfs.writeFile(uri, merged);
 
+    const ownerSpace = USER_CATEGORIES.has(candidate.category)
+      ? ctx.user.userSpaceName()
+      : ctx.user.agentSpaceName();
+
     this.enqueueEmbedding({
       uri,
       text: merged,
       abstract: candidate.abstract,
       name: 'profile.md',
       parentUri,
-      ownerSpace: 'default',
+      ownerSpace,
+      accountId: ctx.user.accountId,
     });
 
     this.logger.log(`Wrote profile memory: ${uri}`);
@@ -150,10 +159,10 @@ export class SessionMemoryWriterService {
   /**
    * For directory categories: create a new file per memory.
    */
-  private async writeDirectoryFile(candidate: CandidateMemory): Promise<string> {
+  private async writeDirectoryFile(candidate: CandidateMemory, ctx: RequestContext): Promise<string> {
     const spaceBase = USER_CATEGORIES.has(candidate.category)
-      ? 'viking://user/default'
-      : 'viking://agent/default';
+      ? `viking://user/${ctx.user.userSpaceName()}`
+      : `viking://agent/${ctx.user.agentSpaceName()}`;
 
     const catPath = CATEGORY_PATH[candidate.category];
     const parentUri = `${spaceBase}/${catPath}`;
@@ -164,13 +173,18 @@ export class SessionMemoryWriterService {
 
     await this.vfs.writeFile(uri, fileContent);
 
+    const ownerSpace = USER_CATEGORIES.has(candidate.category)
+      ? ctx.user.userSpaceName()
+      : ctx.user.agentSpaceName();
+
     this.enqueueEmbedding({
       uri,
       text: fileContent,
       abstract: candidate.abstract,
       name: fileName,
       parentUri,
-      ownerSpace: 'default',
+      ownerSpace,
+      accountId: ctx.user.accountId,
     });
 
     this.logger.log(`Wrote ${candidate.category} memory: ${uri}`);
@@ -243,6 +257,7 @@ export class SessionMemoryWriterService {
     name: string;
     parentUri: string;
     ownerSpace: string;
+    accountId: string;
   }): void {
     this.embeddingQueue.enqueue({
       uri: params.uri,
@@ -252,17 +267,21 @@ export class SessionMemoryWriterService {
       abstract: params.abstract,
       name: params.name,
       parentUri: params.parentUri,
-      accountId: 'default',
+      accountId: params.accountId,
       ownerSpace: params.ownerSpace,
     });
   }
 
-  private enqueueSemanticProcessing(dirUri: string): void {
+  private enqueueSemanticProcessing(dirUri: string, ctx: RequestContext): void {
+    const ownerSpace = dirUri.startsWith('viking://user/')
+      ? ctx.user.userSpaceName()
+      : ctx.user.agentSpaceName();
+
     this.semanticQueue.enqueue({
       uri: dirUri,
       contextType: 'memory',
-      accountId: 'default',
-      ownerSpace: 'default',
+      accountId: ctx.user.accountId,
+      ownerSpace,
     });
   }
 

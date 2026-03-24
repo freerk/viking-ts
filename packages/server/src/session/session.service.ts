@@ -8,6 +8,7 @@ import { SemanticQueueService } from '../queue/semantic-queue.service';
 import { SessionExtractorService, CandidateMemory } from './session-extractor.service';
 import { SessionMemoryWriterService } from './session-memory-writer.service';
 import { NotFoundError, ConflictError } from '../shared/errors';
+import { RequestContext, UserIdentifier } from '../shared/request-context';
 
 export interface SessionRecord {
   session_id: string;
@@ -98,26 +99,27 @@ export class SessionService {
     };
   }
 
-  async create(): Promise<SessionRecord> {
+  async create(ctx: RequestContext): Promise<SessionRecord> {
     const sessionId = randomUUID();
     const now = new Date().toISOString();
+    const { accountId, userId, agentId } = ctx.user;
 
     this.database.db
       .prepare(
         `INSERT INTO sessions (session_id, account_id, user_id, agent_id, status, message_count, contexts_used, skills_used, created_at, updated_at)
          VALUES (?, ?, ?, ?, 'active', 0, 0, 0, ?, ?)`,
       )
-      .run(sessionId, 'default', 'default', 'default', now, now);
+      .run(sessionId, accountId, userId, agentId, now, now);
 
-    await this.ensureUserDirectories();
+    await this.ensureUserDirectories(ctx);
 
     this.logger.log(`Session created: ${sessionId}`);
 
     return {
       session_id: sessionId,
-      account_id: 'default',
-      user_id: 'default',
-      agent_id: 'default',
+      account_id: accountId,
+      user_id: userId,
+      agent_id: agentId,
       status: 'active',
       message_count: 0,
       contexts_used: 0,
@@ -220,7 +222,7 @@ export class SessionService {
     return this.extractor.extract(formattedMessages);
   }
 
-  async commitAsync(sessionId: string): Promise<{ session_id: string; status: string; task_id: string }> {
+  async commitAsync(sessionId: string, ctx: RequestContext): Promise<{ session_id: string; status: string; task_id: string }> {
     await this.get(sessionId);
 
     if (this.taskTracker.hasRunning('session_commit', sessionId)) {
@@ -232,7 +234,7 @@ export class SessionService {
       throw new ConflictError(`Session ${sessionId} already has a commit in progress`);
     }
 
-    this.runCommitInBackground(sessionId, task.task_id);
+    this.runCommitInBackground(sessionId, task.task_id, ctx);
 
     return {
       session_id: sessionId,
@@ -256,14 +258,15 @@ export class SessionService {
   async getContextForSearch(
     sessionId: string,
   ): Promise<{ summaries: string[]; recentMessages: Array<{ role: string; content: string }> }> {
-    await this.get(sessionId);
+    const session = await this.get(sessionId);
 
     const messages = this.getMessages(sessionId);
     const recentMessages = this.formatMessages(messages);
 
     const summaries: string[] = [];
     try {
-      const historyUri = `viking://session/${sessionId}/history`;
+      const identifier = new UserIdentifier(session.account_id, session.user_id, session.agent_id);
+      const historyUri = `viking://session/${identifier.userSpaceName()}/${sessionId}/history`;
       const historyExists = await this.vfs.exists(historyUri);
       if (historyExists) {
         const entries = await this.vfs.ls(historyUri, { showAllHidden: false });
@@ -302,7 +305,7 @@ export class SessionService {
    * Phase 2 - Memory extraction + dedup:
    *   Extract memories from archived messages, write with dedup.
    */
-  private runCommitInBackground(sessionId: string, taskId: string): void {
+  private runCommitInBackground(sessionId: string, taskId: string, ctx: RequestContext): void {
     this.taskTracker.start(taskId);
 
     const doCommit = async (): Promise<void> => {
@@ -323,7 +326,7 @@ export class SessionService {
 
         // Phase 1: Archive
         const compressionIndex = session.compression_index + 1;
-        const archiveUri = `viking://session/${sessionId}/history/archive_${String(compressionIndex).padStart(3, '0')}`;
+        const archiveUri = `viking://session/${ctx.user.userSpaceName()}/${sessionId}/history/archive_${String(compressionIndex).padStart(3, '0')}`;
 
         let summary: string;
         try {
@@ -361,8 +364,8 @@ export class SessionService {
         this.semanticQueue.enqueue({
           uri: archiveUri,
           contextType: 'memory',
-          accountId: 'default',
-          ownerSpace: 'default',
+          accountId: ctx.user.accountId,
+          ownerSpace: ctx.user.userSpaceName(),
         });
 
         this.logger.log(
@@ -374,7 +377,7 @@ export class SessionService {
 
         let memoriesExtracted = 0;
         if (candidates.length > 0) {
-          memoriesExtracted = await this.memoryWriter.writeAll(candidates);
+          memoriesExtracted = await this.memoryWriter.writeAll(candidates, ctx);
         }
 
         const commitNow = new Date().toISOString();
@@ -413,9 +416,9 @@ export class SessionService {
     });
   }
 
-  private async ensureUserDirectories(): Promise<void> {
-    const userMemDir = 'viking://user/default/memories';
-    const agentMemDir = 'viking://agent/default/memories';
+  private async ensureUserDirectories(ctx: RequestContext): Promise<void> {
+    const userMemDir = `viking://user/${ctx.user.userSpaceName()}/memories`;
+    const agentMemDir = `viking://agent/${ctx.user.agentSpaceName()}/memories`;
 
     try {
       if (!(await this.vfs.exists(userMemDir))) {

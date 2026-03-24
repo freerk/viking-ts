@@ -4,6 +4,10 @@ import { EmbeddingQueueService } from '../src/queue/embedding-queue.service';
 import { SemanticQueueService } from '../src/queue/semantic-queue.service';
 import { MemoryDeduplicatorService, DedupOutcome } from '../src/session/memory-deduplicator.service';
 import { CandidateMemory } from '../src/session/session-extractor.service';
+import { RequestContext, UserIdentifier } from '../src/shared/request-context';
+
+const DEFAULT_CTX: RequestContext = { user: UserIdentifier.default() };
+const AGENT_SPACE = UserIdentifier.default().agentSpaceName();
 
 function makeCandidate(overrides: Partial<CandidateMemory> = {}): CandidateMemory {
   return {
@@ -42,7 +46,7 @@ describe('SessionMemoryWriterService', () => {
   });
 
   it('should return 0 for empty candidates', async () => {
-    const count = await writer.writeAll([]);
+    const count = await writer.writeAll([], DEFAULT_CTX);
     expect(count).toBe(0);
     expect(vfs.writeFile).not.toHaveBeenCalled();
   });
@@ -53,7 +57,7 @@ describe('SessionMemoryWriterService', () => {
 
       const count = await writer.writeAll([
         makeCandidate({ category: 'profile', content: 'User is Alice' }),
-      ]);
+      ], DEFAULT_CTX);
 
       expect(count).toBe(1);
       expect(vfs.writeFile).toHaveBeenCalledWith(
@@ -76,7 +80,7 @@ describe('SessionMemoryWriterService', () => {
 
       const count = await writer.writeAll([
         makeCandidate({ category: 'profile', content: 'New info about user' }),
-      ]);
+      ], DEFAULT_CTX);
 
       expect(count).toBe(1);
       expect(vfs.writeFile).toHaveBeenCalledWith(
@@ -94,7 +98,7 @@ describe('SessionMemoryWriterService', () => {
 
       const count = await writer.writeAll([
         makeCandidate({ category: 'preferences', abstract: 'Likes dark mode' }),
-      ]);
+      ], DEFAULT_CTX);
 
       expect(count).toBe(1);
       expect(deduplicator.deduplicate).toHaveBeenCalledWith(
@@ -112,7 +116,7 @@ describe('SessionMemoryWriterService', () => {
 
       const count = await writer.writeAll([
         makeCandidate({ category: 'entities', abstract: 'Project Viking' }),
-      ]);
+      ], DEFAULT_CTX);
 
       expect(count).toBe(1);
       const writeCall = vfs.writeFile.mock.calls[0] as [string, string];
@@ -124,7 +128,7 @@ describe('SessionMemoryWriterService', () => {
 
       const count = await writer.writeAll([
         makeCandidate({ category: 'events', abstract: 'Shipped v1.0' }),
-      ]);
+      ], DEFAULT_CTX);
 
       expect(count).toBe(1);
       const writeCall = vfs.writeFile.mock.calls[0] as [string, string];
@@ -138,11 +142,11 @@ describe('SessionMemoryWriterService', () => {
 
       const count = await writer.writeAll([
         makeCandidate({ category: 'cases', abstract: 'Fixed auth bug' }),
-      ]);
+      ], DEFAULT_CTX);
 
       expect(count).toBe(1);
       const writeCall = vfs.writeFile.mock.calls[0] as [string, string];
-      expect(writeCall[0]).toMatch(/^viking:\/\/agent\/default\/memories\/cases\//);
+      expect(writeCall[0]).toMatch(new RegExp(`^viking://agent/${AGENT_SPACE}/memories\/cases\/`));
     });
 
     it('should write patterns under agent space', async () => {
@@ -150,11 +154,11 @@ describe('SessionMemoryWriterService', () => {
 
       const count = await writer.writeAll([
         makeCandidate({ category: 'patterns', abstract: 'TDD workflow' }),
-      ]);
+      ], DEFAULT_CTX);
 
       expect(count).toBe(1);
       const writeCall = vfs.writeFile.mock.calls[0] as [string, string];
-      expect(writeCall[0]).toMatch(/^viking:\/\/agent\/default\/memories\/patterns\//);
+      expect(writeCall[0]).toMatch(new RegExp(`^viking://agent/${AGENT_SPACE}/memories\/patterns\/`));
     });
 
     it('should write tools under agent space with toolName as filename', async () => {
@@ -167,11 +171,11 @@ describe('SessionMemoryWriterService', () => {
           toolName: 'docker-compose',
           bestFor: 'Multi-container orchestration',
         }),
-      ]);
+      ], DEFAULT_CTX);
 
       expect(count).toBe(1);
       const writeCall = vfs.writeFile.mock.calls[0] as [string, string];
-      expect(writeCall[0]).toMatch(/^viking:\/\/agent\/default\/memories\/tools\//);
+      expect(writeCall[0]).toMatch(new RegExp(`^viking://agent/${AGENT_SPACE}/memories\/tools\/`));
       expect(writeCall[0]).toMatch(/docker-compose\.md$/);
     });
 
@@ -186,11 +190,11 @@ describe('SessionMemoryWriterService', () => {
           bestFor: 'PR reviews',
           commonFailures: 'Missing edge case checks',
         }),
-      ]);
+      ], DEFAULT_CTX);
 
       expect(count).toBe(1);
       const writeCall = vfs.writeFile.mock.calls[0] as [string, string];
-      expect(writeCall[0]).toMatch(/^viking:\/\/agent\/default\/memories\/skills\//);
+      expect(writeCall[0]).toMatch(new RegExp(`^viking://agent/${AGENT_SPACE}/memories\/skills\/`));
       expect(writeCall[0]).toMatch(/code-review\.md$/);
     });
 
@@ -210,7 +214,7 @@ describe('SessionMemoryWriterService', () => {
           commonFailures: 'OOM on large builds',
           recommendation: 'Use webpack 5',
         }),
-      ]);
+      ], DEFAULT_CTX);
 
       const writeCall = vfs.writeFile.mock.calls[0] as [string, string];
       const content = writeCall[1];
@@ -231,7 +235,7 @@ describe('SessionMemoryWriterService', () => {
 
       const count = await writer.writeAll([
         makeCandidate({ category: 'preferences' }),
-      ]);
+      ], DEFAULT_CTX);
 
       expect(count).toBe(0);
       expect(vfs.writeFile).not.toHaveBeenCalled();
@@ -242,7 +246,7 @@ describe('SessionMemoryWriterService', () => {
 
       const count = await writer.writeAll([
         makeCandidate({ category: 'preferences' }),
-      ]);
+      ], DEFAULT_CTX);
 
       // merged counts as written (successful)
       expect(count).toBe(1);
@@ -255,7 +259,7 @@ describe('SessionMemoryWriterService', () => {
 
       const count = await writer.writeAll([
         makeCandidate({ category: 'preferences', content: 'Prefers dark mode' }),
-      ]);
+      ], DEFAULT_CTX);
 
       expect(count).toBe(1);
       expect(vfs.writeFile).toHaveBeenCalledWith(
@@ -273,7 +277,7 @@ describe('SessionMemoryWriterService', () => {
       makeCandidate({ category: 'profile' }),
       makeCandidate({ category: 'preferences' }),
       makeCandidate({ category: 'cases' }),
-    ]);
+    ], DEFAULT_CTX);
 
     // profile + preferences + cases = 3 embedding enqueues
     expect(embeddingQueue.enqueue).toHaveBeenCalledTimes(3);
@@ -296,7 +300,7 @@ describe('SessionMemoryWriterService', () => {
       makeCandidate({ category: 'profile' }),
       makeCandidate({ category: 'preferences' }),
       makeCandidate({ category: 'preferences' }),
-    ]);
+    ], DEFAULT_CTX);
 
     // profile -> viking://user/default/memories
     // preferences -> viking://user/default/memories/preferences (deduped)
@@ -316,7 +320,7 @@ describe('SessionMemoryWriterService', () => {
       makeCandidate({ category: 'profile' }),
       makeCandidate({ category: 'entities' }),
       makeCandidate({ category: 'cases' }),
-    ]);
+    ], DEFAULT_CTX);
 
     expect(count).toBe(2);
   });

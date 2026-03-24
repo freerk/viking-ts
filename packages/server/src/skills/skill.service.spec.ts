@@ -71,7 +71,7 @@ describe('SkillService', () => {
     expect(result.id).toBeDefined();
     expect(result.name).toBe('react-expert');
     expect(result.description).toBe('Expert React patterns');
-    expect(result.uri).toBe('viking://agent/default/skills/react-expert.md');
+    expect(result.uri).toBe('viking://agent/skills/react-expert/');
     expect(result.tags).toEqual(['react', 'frontend']);
     expect(result.l0Abstract).toBe('Full React skill content here');
     expect(result.l2Content).toBe('Full React skill content here');

@@ -176,11 +176,11 @@ export class ResourceController {
       throw new BadRequestException("Either 'data' or 'temp_path' must be provided");
     }
 
-    const targetUri = `viking://agent/default/skills/${skillName}.md`;
+    const targetUri = `viking://agent/skills/${skillName}/`;
 
     await this.vfs.writeFile(targetUri, content);
 
-    const parentUri = 'viking://agent/default/skills';
+    const parentUri = 'viking://agent/skills';
     const abstract = content.slice(0, 256);
 
     this.embeddingQueue.enqueue({

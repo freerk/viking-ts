@@ -1,5 +1,7 @@
 import { Module } from '@nestjs/common';
+import { APP_INTERCEPTOR } from '@nestjs/core';
 import { ConfigModule } from '@nestjs/config';
+import { RequestContextInterceptor } from './shared/request-context.interceptor';
 import { HealthModule } from './health/health.module';
 import { StorageModule } from './storage/storage.module';
 import { EmbeddingModule } from './embedding/embedding.module';
@@ -40,6 +42,12 @@ import { loadConfig } from './config';
     TasksModule,
     SystemModule,
     SessionModule,
+  ],
+  providers: [
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: RequestContextInterceptor,
+    },
   ],
 })
 export class AppModule {}

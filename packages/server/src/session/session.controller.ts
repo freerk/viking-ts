@@ -13,6 +13,8 @@ import { SessionService, MessagePart } from './session.service';
 import { okResponse, errorResponse } from '../shared/api-response.helper';
 import { ConflictError, NotFoundError } from '../shared/errors';
 import { ApiResponse } from '../shared/types';
+import { RequestContext } from '../shared/request-context';
+import { VikingContext } from '../shared/request-context.interceptor';
 
 interface AddMessageBody {
   role: string;
@@ -32,8 +34,8 @@ export class SessionController {
 
   @Post()
   @ApiOperation({ summary: 'Create a new session' })
-  async create(): Promise<ApiResponse<unknown>> {
-    const session = await this.sessionService.create();
+  async create(@VikingContext() ctx: RequestContext): Promise<ApiResponse<unknown>> {
+    const session = await this.sessionService.create(ctx);
     return okResponse({
       session_id: session.session_id,
       user: {
@@ -88,9 +90,9 @@ export class SessionController {
 
   @Post(':id/commit')
   @ApiOperation({ summary: 'Commit a session (archive + extract memories)' })
-  async commit(@Param('id') id: string): Promise<ApiResponse<unknown>> {
+  async commit(@Param('id') id: string, @VikingContext() ctx: RequestContext): Promise<ApiResponse<unknown>> {
     try {
-      const result = await this.sessionService.commitAsync(id);
+      const result = await this.sessionService.commitAsync(id, ctx);
       return okResponse({
         session_id: result.session_id,
         status: result.status,

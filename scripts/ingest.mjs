@@ -57,6 +57,7 @@ function parseCliArgs() {
   const { values, positionals } = parseArgs({
     options: {
       agent: { type: 'string' },
+      user: { type: 'string' },
       'no-workspace': { type: 'boolean', default: false },
       'no-sessions': { type: 'boolean', default: false },
       'no-identity': { type: 'boolean', default: false },
@@ -81,6 +82,7 @@ function printHelp() {
 
 Options:
   --agent <id>            Only ingest for this agent (default: all agents)
+  --user <id>             Set X-OpenViking-User header (default: "default")
   --no-workspace          Skip workspace MEMORY.md + memory/*.md
   --no-sessions           Skip session .jsonl files
   --no-identity           Skip SOUL.md, IDENTITY.md, AGENTS.md, USER.md
@@ -140,6 +142,20 @@ function loadAgents(filterAgentId) {
   }));
 }
 
+/** Identity headers injected into every request. Set in main(). */
+let identityHeaders = {};
+
+function buildIdentityHeaders(userId, agentId) {
+  const headers = {};
+  if (userId && userId !== 'default') {
+    headers['X-OpenViking-User'] = userId;
+  }
+  if (agentId && agentId !== 'default') {
+    headers['X-OpenViking-Agent'] = agentId;
+  }
+  return headers;
+}
+
 async function post(baseUrl, endpoint, body, dryRun) {
   if (dryRun) {
     console.log(`  [DRY-RUN] POST ${endpoint} → ${JSON.stringify(body).slice(0, 120)}...`);
@@ -147,7 +163,7 @@ async function post(baseUrl, endpoint, body, dryRun) {
   }
   const res = await fetch(`${baseUrl}${endpoint}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...identityHeaders },
     body: JSON.stringify(body),
   });
   if (!res.ok) {
@@ -162,7 +178,10 @@ async function httpDelete(baseUrl, endpoint, dryRun) {
     console.log(`  [DRY-RUN] DELETE ${endpoint}`);
     return;
   }
-  const res = await fetch(`${baseUrl}${endpoint}`, { method: 'DELETE' });
+  const res = await fetch(`${baseUrl}${endpoint}`, {
+    method: 'DELETE',
+    headers: { ...identityHeaders },
+  });
   if (!res.ok && res.status !== 204) {
     const text = await res.text();
     throw new Error(`HTTP ${res.status}: ${text.slice(0, 200)}`);
@@ -170,7 +189,9 @@ async function httpDelete(baseUrl, endpoint, dryRun) {
 }
 
 async function httpGet(baseUrl, endpoint) {
-  const res = await fetch(`${baseUrl}${endpoint}`);
+  const res = await fetch(`${baseUrl}${endpoint}`, {
+    headers: { ...identityHeaders },
+  });
   if (!res.ok) {
     const text = await res.text();
     throw new Error(`HTTP ${res.status}: ${text.slice(0, 200)}`);
@@ -625,6 +646,10 @@ async function main() {
   const resourcePrefix = opts['resource-prefix'];
   const skillDirs = opts.skills ?? [];
   const syncSkillsFlag = opts['sync-skills'] ?? false;
+  const userId = opts.user ?? 'default';
+
+  // Set global identity headers for all requests
+  identityHeaders = buildIdentityHeaders(userId, opts.agent ?? 'default');
 
   console.log('viking-ts ingest');
   console.log(`  Target: ${baseUrl}`);

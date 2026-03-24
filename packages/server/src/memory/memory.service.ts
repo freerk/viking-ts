@@ -13,6 +13,7 @@ import {
   MemoryCategory,
   SearchResult,
 } from '../shared/types';
+import { UserIdentifier } from '../shared/request-context';
 
 @Injectable()
 export class MemoryService {
@@ -30,7 +31,7 @@ export class MemoryService {
 
   private buildMemoryUri(id: string, type: MemoryType, agentId?: string, userId?: string): string {
     if (type === 'agent') {
-      const space = agentId ?? 'default';
+      const space = this.computeAgentSpace(userId, agentId);
       return `viking://agent/${space}/memories/${id}.md`;
     }
     const space = userId ?? 'default';
@@ -39,11 +40,17 @@ export class MemoryService {
 
   private parentUriForMemory(type: MemoryType, agentId?: string, userId?: string): string {
     if (type === 'agent') {
-      const space = agentId ?? 'default';
+      const space = this.computeAgentSpace(userId, agentId);
       return `viking://agent/${space}/memories`;
     }
     const space = userId ?? 'default';
     return `viking://user/${space}/memories`;
+  }
+
+  private computeAgentSpace(userId?: string, agentId?: string): string {
+    const uid = userId ?? 'default';
+    const aid = agentId ?? 'default';
+    return new UserIdentifier('default', uid, aid).agentSpaceName();
   }
 
   async createMemory(params: {
@@ -60,7 +67,9 @@ export class MemoryService {
     const category: MemoryCategory = params.category ?? 'general';
     const uri = params.uri ?? this.buildMemoryUri(id, type, params.agentId, params.userId);
     const parentUri = this.parentUriForMemory(type, params.agentId, params.userId);
-    const ownerSpace = type === 'agent' ? (params.agentId ?? 'default') : (params.userId ?? 'default');
+    const ownerSpace = type === 'agent'
+      ? this.computeAgentSpace(params.userId, params.agentId)
+      : (params.userId ?? 'default');
 
     await this.vfs.writeFile(uri, params.text);
 
