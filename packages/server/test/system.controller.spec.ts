@@ -1,5 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication } from '@nestjs/common';
+import { APP_INTERCEPTOR } from '@nestjs/core';
 import request from 'supertest';
 import { SystemController } from '../src/system/system.controller';
 import { DatabaseService } from '../src/storage/database.service';
@@ -7,6 +8,7 @@ import { EmbeddingService } from '../src/embedding/embedding.service';
 import { EmbeddingQueueService } from '../src/queue/embedding-queue.service';
 import { SemanticQueueService } from '../src/queue/semantic-queue.service';
 import { QueueStats } from '../src/queue/async-queue';
+import { RequestContextInterceptor } from '../src/shared/request-context.interceptor';
 
 describe('SystemController (HTTP)', () => {
   let app: INestApplication;
@@ -43,6 +45,7 @@ describe('SystemController (HTTP)', () => {
         { provide: EmbeddingService, useValue: mockEmbedding },
         { provide: EmbeddingQueueService, useValue: mockEmbeddingQueue },
         { provide: SemanticQueueService, useValue: mockSemanticQueue },
+        { provide: APP_INTERCEPTOR, useClass: RequestContextInterceptor },
       ],
     }).compile();
 
@@ -106,7 +109,7 @@ describe('SystemController (HTTP)', () => {
   });
 
   describe('GET /api/v1/system/status', () => {
-    it('should return initialized status', async () => {
+    it('should return initialized status with default user and agent', async () => {
       const res = await request(app.getHttpServer())
         .get('/api/v1/system/status')
         .expect(200);
@@ -114,6 +117,19 @@ describe('SystemController (HTTP)', () => {
       expect(res.body.status).toBe('ok');
       expect(res.body.result.initialized).toBe(true);
       expect(res.body.result.version).toBe('0.1.0');
+      expect(res.body.result.user).toBe('default');
+      expect(res.body.result.agent).toBe('default');
+    });
+
+    it('should return user and agent from request headers', async () => {
+      const res = await request(app.getHttpServer())
+        .get('/api/v1/system/status')
+        .set('X-OpenViking-User', 'freerk')
+        .set('X-OpenViking-Agent', 'main')
+        .expect(200);
+
+      expect(res.body.result.user).toBe('freerk');
+      expect(res.body.result.agent).toBe('main');
     });
   });
 

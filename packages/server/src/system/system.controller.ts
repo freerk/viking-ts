@@ -13,6 +13,8 @@ import { EmbeddingService } from '../embedding/embedding.service';
 import { EmbeddingQueueService } from '../queue/embedding-queue.service';
 import { SemanticQueueService } from '../queue/semantic-queue.service';
 import { okResponse, errorResponse } from '../shared/api-response.helper';
+import { RequestContext } from '../shared/request-context';
+import { VikingContext } from '../shared/request-context.interceptor';
 
 interface ReadyCheck {
   db: 'ok' | 'error';
@@ -63,8 +65,13 @@ export class SystemController {
 
   @Get('api/v1/system/status')
   @ApiOperation({ summary: 'System status' })
-  getStatus() {
-    return okResponse({ initialized: true, version: '0.1.0' });
+  getStatus(@VikingContext() ctx: RequestContext) {
+    return okResponse({
+      initialized: true,
+      version: '0.1.0',
+      user: ctx.user.userId,
+      agent: ctx.user.agentId,
+    });
   }
 
   @Post('api/v1/system/wait')
