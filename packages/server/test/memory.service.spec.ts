@@ -9,6 +9,7 @@ import { LlmService } from '../src/llm/llm.service';
 import { tmpdir } from 'os';
 import { mkdtempSync } from 'fs';
 import { join } from 'path';
+import { typeOrmTestImports } from './helpers/test-typeorm';
 
 function createTempDir(): string {
   return mkdtempSync(join(tmpdir(), 'viking-test-'));
@@ -33,6 +34,7 @@ describe('MemoryService', () => {
             }),
           ],
         }),
+        ...typeOrmTestImports(tempDir),
       ],
       providers: [
         MemoryService,

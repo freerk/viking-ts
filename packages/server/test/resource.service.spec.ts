@@ -8,6 +8,7 @@ import { EmbeddingService } from '../src/embedding/embedding.service';
 import { tmpdir } from 'os';
 import { mkdtempSync } from 'fs';
 import { join } from 'path';
+import { typeOrmTestImports } from './helpers/test-typeorm';
 
 function createTempDir(): string {
   return mkdtempSync(join(tmpdir(), 'viking-res-test-'));
@@ -32,6 +33,7 @@ describe('ResourceService', () => {
             }),
           ],
         }),
+        ...typeOrmTestImports(tempDir),
       ],
       providers: [
         ResourceService,

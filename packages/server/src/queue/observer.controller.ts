@@ -46,8 +46,8 @@ export class ObserverController {
 
   @Get('vikingdb')
   @ApiOperation({ summary: 'Get vector store status' })
-  getVikingdb(): ApiResponse<ComponentStatus> {
-    return okResponse(this.buildVikingdbStatus());
+  async getVikingdb(): Promise<ApiResponse<ComponentStatus>> {
+    return okResponse(await this.buildVikingdbStatus());
   }
 
   @Get('vlm')
@@ -58,9 +58,9 @@ export class ObserverController {
 
   @Get('system')
   @ApiOperation({ summary: 'Get aggregated system status' })
-  getSystem(): ApiResponse<SystemStatus> {
+  async getSystem(): Promise<ApiResponse<SystemStatus>> {
     const queue = this.buildQueueStatus();
-    const vikingdb = this.buildVikingdbStatus();
+    const vikingdb = await this.buildVikingdbStatus();
     const vlm = this.buildVlmStatus();
 
     const errors: string[] = [];
@@ -102,13 +102,13 @@ export class ObserverController {
     };
   }
 
-  private buildVikingdbStatus(): ComponentStatus {
+  private async buildVikingdbStatus(): Promise<ComponentStatus> {
     let recordCount = 0;
     let hasErrors = false;
     let dbStatus = 'OK';
 
     try {
-      recordCount = this.contextVector.count();
+      recordCount = await this.contextVector.count();
     } catch {
       hasErrors = true;
       dbStatus = 'ERROR';

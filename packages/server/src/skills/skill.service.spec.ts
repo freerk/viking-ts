@@ -1,5 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigModule } from '@nestjs/config';
+import { TypeOrmModule } from '@nestjs/typeorm';
 import { mkdtempSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
@@ -7,6 +8,7 @@ import { SkillService } from './skill.service';
 import { DatabaseService } from '../storage/database.service';
 import { VfsService } from '../storage/vfs.service';
 import { ContextVectorService } from '../storage/context-vector.service';
+import { ContextVectorEntity } from '../storage/entities';
 import { EmbeddingService } from '../embedding/embedding.service';
 import { NotFoundException } from '@nestjs/common';
 
@@ -30,6 +32,13 @@ describe('SkillService', () => {
             }),
           ],
         }),
+        TypeOrmModule.forRoot({
+          type: 'better-sqlite3',
+          database: join(tmpDir, 'viking.db'),
+          entities: [ContextVectorEntity],
+          synchronize: true,
+        }),
+        TypeOrmModule.forFeature([ContextVectorEntity]),
       ],
       providers: [
         SkillService,

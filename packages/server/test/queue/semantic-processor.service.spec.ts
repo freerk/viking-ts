@@ -10,6 +10,7 @@ import { LlmService } from '../../src/llm/llm.service';
 import { tmpdir } from 'os';
 import { mkdtempSync } from 'fs';
 import { join } from 'path';
+import { typeOrmTestImports } from '../helpers/test-typeorm';
 
 function createTempDir(): string {
   return mkdtempSync(join(tmpdir(), 'viking-sp-test-'));
@@ -37,7 +38,7 @@ describe('SemanticProcessorService', () => {
         ConfigModule.forRoot({
           isGlobal: true,
           load: [() => ({
-        storage: { path: tempDir },
+            storage: { path: tempDir },
         semantic: {
           maxFileContentChars: 30000,
           maxOverviewPromptChars: 60000,
@@ -49,6 +50,7 @@ describe('SemanticProcessorService', () => {
         },
       })],
         }),
+        ...typeOrmTestImports(tempDir),
       ],
       providers: [
         SemanticProcessorService,
@@ -212,6 +214,7 @@ describe('SemanticProcessorService', () => {
               },
             })],
           }),
+          ...typeOrmTestImports(lowBudgetDir),
         ],
         providers: [
           SemanticProcessorService,
@@ -284,6 +287,7 @@ describe('SemanticProcessorService', () => {
               },
             })],
           }),
+          ...typeOrmTestImports(truncDir),
         ],
         providers: [
           SemanticProcessorService,

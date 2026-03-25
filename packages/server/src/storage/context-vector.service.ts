@@ -1,6 +1,9 @@
 import { Injectable } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { ScopedRepository } from 'typeorm-scoped-repository';
 import { createHash } from 'crypto';
-import { DatabaseService } from './database.service';
+import { ContextVectorEntity } from './entities';
 import { InvalidUriError } from '../shared/errors';
 
 export interface ContextRecord {
@@ -22,62 +25,61 @@ export interface ContextRecord {
   embedding: number[] | null;
 }
 
-interface ContextVectorRow {
-  id: string;
-  uri: string;
-  parent_uri: string | null;
-  type: string;
-  context_type: string;
-  level: number;
-  abstract: string;
-  name: string;
-  description: string;
-  tags: string;
-  account_id: string;
-  owner_space: string;
-  active_count: number;
-  created_at: string;
-  updated_at: string;
-  embedding_json: string | null;
-}
-
 @Injectable()
 export class ContextVectorService {
 
-  constructor(private readonly database: DatabaseService) {}
+  constructor(
+    @InjectRepository(ContextVectorEntity)
+    private readonly repo: Repository<ContextVectorEntity>,
+  ) {}
 
   static generateId(accountId: string, uri: string): string {
     return createHash('md5').update(`${accountId}:${uri}`).digest('hex');
   }
 
-  private rowToRecord(row: ContextVectorRow): ContextRecord {
+  private entityToRecord(entity: ContextVectorEntity): ContextRecord {
     let embedding: number[] | null = null;
-    if (row.embedding_json) {
+    if (entity.embeddingJson) {
       try {
-        embedding = JSON.parse(row.embedding_json) as number[];
+        embedding = JSON.parse(entity.embeddingJson) as number[];
       } catch {
         embedding = null;
       }
     }
 
     return {
-      id: row.id,
-      uri: row.uri,
-      parentUri: row.parent_uri,
-      type: row.type,
-      contextType: row.context_type,
-      level: row.level,
-      abstract: row.abstract,
-      name: row.name,
-      description: row.description,
-      tags: row.tags,
-      accountId: row.account_id,
-      ownerSpace: row.owner_space,
-      activeCount: row.active_count,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
+      id: entity.id,
+      uri: entity.uri,
+      parentUri: entity.parentUri,
+      type: entity.type,
+      contextType: entity.contextType,
+      level: entity.level,
+      abstract: entity.abstract,
+      name: entity.name,
+      description: entity.description,
+      tags: entity.tags,
+      accountId: entity.accountId,
+      ownerSpace: entity.ownerSpace,
+      activeCount: entity.activeCount,
+      createdAt: entity.createdAt,
+      updatedAt: entity.updatedAt,
       embedding,
     };
+  }
+
+  /**
+   * Build a ScopedRepository for scoped queries (memories/skills).
+   * Resources use the bare repo (no scope filtering).
+   */
+  private scoped(scope: { accountId?: string; ownerSpace?: string }): ScopedRepository<ContextVectorEntity> {
+    const scopeFields: Record<string, string> = {};
+    if (scope.accountId) {
+      scopeFields['accountId'] = scope.accountId;
+    }
+    if (scope.ownerSpace !== undefined) {
+      scopeFields['ownerSpace'] = scope.ownerSpace;
+    }
+    return new ScopedRepository(this.repo, scopeFields);
   }
 
   async upsert(params: {
@@ -90,6 +92,10 @@ export class ContextVectorService {
     name?: string;
     description?: string;
     tags?: string;
+    /**
+     * Scoping identifier. For memories/skills: flows from request context
+     * (ctx.user.accountId). For resources: always 'default' (shared/global).
+     */
     accountId?: string;
     ownerSpace?: string;
     embedding?: number[] | null;
@@ -103,40 +109,39 @@ export class ContextVectorService {
     const now = new Date().toISOString();
     const embeddingJson = params.embedding ? JSON.stringify(params.embedding) : null;
 
-    this.database.db
-      .prepare(
-        `INSERT INTO context_vectors (id, uri, parent_uri, type, context_type, level, abstract, name, description, tags, account_id, owner_space, created_at, updated_at, embedding_json)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(id) DO UPDATE SET
-           parent_uri = excluded.parent_uri,
-           type = excluded.type,
-           context_type = excluded.context_type,
-           level = excluded.level,
-           abstract = excluded.abstract,
-           name = excluded.name,
-           description = excluded.description,
-           tags = excluded.tags,
-           owner_space = excluded.owner_space,
-           updated_at = excluded.updated_at,
-           embedding_json = excluded.embedding_json`,
+    const entity = this.repo.create({
+      id,
+      uri: params.uri,
+      parentUri: params.parentUri ?? null,
+      type: params.type ?? 'file',
+      contextType: params.contextType,
+      level: params.level ?? 2,
+      abstract: params.abstract ?? '',
+      name: params.name ?? '',
+      description: params.description ?? '',
+      tags: params.tags ?? '',
+      accountId,
+      ownerSpace: params.ownerSpace ?? '',
+      activeCount: 0,
+      createdAt: now,
+      updatedAt: now,
+      embeddingJson,
+    });
+
+    // Atomic upsert matching original ON CONFLICT(id) DO UPDATE behaviour
+    await this.repo
+      .createQueryBuilder()
+      .insert()
+      .into(ContextVectorEntity)
+      .values(entity)
+      .orUpdate(
+        [
+          'parent_uri', 'type', 'context_type', 'level', 'abstract',
+          'name', 'description', 'tags', 'owner_space', 'updated_at', 'embedding_json',
+        ],
+        ['id'],
       )
-      .run(
-        id,
-        params.uri,
-        params.parentUri ?? null,
-        params.type ?? 'file',
-        params.contextType,
-        params.level ?? 2,
-        params.abstract ?? '',
-        params.name ?? '',
-        params.description ?? '',
-        params.tags ?? '',
-        accountId,
-        params.ownerSpace ?? '',
-        now,
-        now,
-        embeddingJson,
-      );
+      .execute();
 
     return {
       id,
@@ -159,70 +164,63 @@ export class ContextVectorService {
   }
 
   async getByUri(uri: string): Promise<ContextRecord | undefined> {
-    const row = this.database.db
-      .prepare('SELECT * FROM context_vectors WHERE uri = ?')
-      .get(uri) as ContextVectorRow | undefined;
-
-    return row ? this.rowToRecord(row) : undefined;
+    const entity = await this.repo.findOne({ where: { uri } });
+    return entity ? this.entityToRecord(entity) : undefined;
   }
 
   async getById(id: string): Promise<ContextRecord | undefined> {
-    const row = this.database.db
-      .prepare('SELECT * FROM context_vectors WHERE id = ?')
-      .get(id) as ContextVectorRow | undefined;
-
-    return row ? this.rowToRecord(row) : undefined;
+    const entity = await this.repo.findOne({ where: { id } });
+    return entity ? this.entityToRecord(entity) : undefined;
   }
 
   async deleteByUri(uri: string): Promise<boolean> {
-    const result = this.database.db
-      .prepare('DELETE FROM context_vectors WHERE uri = ?')
-      .run(uri);
-    return result.changes > 0;
+    const result = await this.repo.delete({ uri });
+    return (result.affected ?? 0) > 0;
   }
 
   /** Back-propagate L0 abstract and L1 overview into the vector record for a given URI. */
   async updateAbstractAndDescription(uri: string, abstract: string, description: string): Promise<void> {
-    this.database.db
-      .prepare(
-        `UPDATE context_vectors SET abstract = ?, description = ?, updated_at = ? WHERE uri = ?`,
-      )
-      .run(abstract, description, new Date().toISOString(), uri);
+    await this.repo.update({ uri }, {
+      abstract,
+      description,
+      updatedAt: new Date().toISOString(),
+    });
   }
 
   async deleteById(id: string): Promise<boolean> {
-    const result = this.database.db
-      .prepare('DELETE FROM context_vectors WHERE id = ?')
-      .run(id);
-    return result.changes > 0;
+    const result = await this.repo.delete({ id });
+    return (result.affected ?? 0) > 0;
   }
 
   async listByContextType(
     contextType: string,
     opts: { accountId?: string; ownerSpace?: string; limit?: number; offset?: number } = {},
   ): Promise<ContextRecord[]> {
-    const conditions: string[] = ['context_type = ?'];
-    const params: unknown[] = [contextType];
-
-    if (opts.accountId) {
-      conditions.push('account_id = ?');
-      params.push(opts.accountId);
-    }
-    if (opts.ownerSpace !== undefined) {
-      conditions.push('owner_space = ?');
-      params.push(opts.ownerSpace);
-    }
-
     const limit = opts.limit ?? 100;
     const offset = opts.offset ?? 0;
 
-    const rows = this.database.db
-      .prepare(
-        `SELECT * FROM context_vectors WHERE ${conditions.join(' AND ')} ORDER BY created_at DESC LIMIT ? OFFSET ?`,
-      )
-      .all(...params, limit, offset) as ContextVectorRow[];
+    if (opts.accountId || opts.ownerSpace !== undefined) {
+      // Fortress pattern: ScopedRepository guarantees scope is always applied
+      const scopedRepo = this.scoped({
+        accountId: opts.accountId,
+        ownerSpace: opts.ownerSpace,
+      });
+      const entities = await scopedRepo.find({
+        where: { contextType },
+        order: { createdAt: 'DESC' },
+        take: limit,
+        skip: offset,
+      });
+      return entities.map((e) => this.entityToRecord(e));
+    }
 
-    return rows.map((row) => this.rowToRecord(row));
+    const entities = await this.repo.find({
+      where: { contextType },
+      order: { createdAt: 'DESC' },
+      take: limit,
+      skip: offset,
+    });
+    return entities.map((e) => this.entityToRecord(e));
   }
 
   async searchSimilar(
@@ -236,48 +234,41 @@ export class ContextVectorService {
       parentUriPrefix?: string;
     } = {},
   ): Promise<Array<ContextRecord & { score: number }>> {
-    const conditions: string[] = ['embedding_json IS NOT NULL'];
-    const params: unknown[] = [];
+    const qb = this.repo.createQueryBuilder('cv')
+      .where('cv.embedding_json IS NOT NULL');
 
     if (opts.contextType) {
-      conditions.push('context_type = ?');
-      params.push(opts.contextType);
+      qb.andWhere('cv.context_type = :contextType', { contextType: opts.contextType });
     }
     if (opts.level !== undefined) {
-      conditions.push('level = ?');
-      params.push(opts.level);
+      qb.andWhere('cv.level = :level', { level: opts.level });
     }
     if (opts.accountId) {
-      conditions.push('account_id = ?');
-      params.push(opts.accountId);
+      qb.andWhere('cv.account_id = :accountId', { accountId: opts.accountId });
     }
     if (opts.parentUriPrefix) {
-      conditions.push('uri LIKE ?');
-      params.push(`${opts.parentUriPrefix}%`);
+      qb.andWhere('cv.uri LIKE :uriPrefix', { uriPrefix: `${opts.parentUriPrefix}%` });
     }
 
-    const rows = this.database.db
-      .prepare(`SELECT * FROM context_vectors WHERE ${conditions.join(' AND ')}`)
-      .all(...params) as ContextVectorRow[];
+    const entities = await qb.getMany();
 
     const limit = opts.limit ?? 10;
     const scoreThreshold = opts.scoreThreshold ?? 0.0;
-
     const scored: Array<ContextRecord & { score: number }> = [];
 
-    for (const row of rows) {
-      if (!row.embedding_json) continue;
+    for (const entity of entities) {
+      if (!entity.embeddingJson) continue;
 
       let embedding: number[];
       try {
-        embedding = JSON.parse(row.embedding_json) as number[];
+        embedding = JSON.parse(entity.embeddingJson) as number[];
       } catch {
         continue;
       }
 
       const score = cosineSimilarity(vector, embedding);
       if (score >= scoreThreshold) {
-        scored.push({ ...this.rowToRecord(row), score });
+        scored.push({ ...this.entityToRecord(entity), score });
       }
     }
 
@@ -298,37 +289,33 @@ export class ContextVectorService {
       accountId?: string;
     } = {},
   ): Promise<Array<ContextRecord & { score: number }>> {
-    const conditions: string[] = ['embedding_json IS NOT NULL', 'parent_uri = ?'];
-    const params: unknown[] = [parentUri];
+    const qb = this.repo.createQueryBuilder('cv')
+      .where('cv.embedding_json IS NOT NULL')
+      .andWhere('cv.parent_uri = :parentUri', { parentUri });
 
     if (opts.contextType) {
-      conditions.push('context_type = ?');
-      params.push(opts.contextType);
+      qb.andWhere('cv.context_type = :contextType', { contextType: opts.contextType });
     }
     if (opts.accountId) {
-      conditions.push('account_id = ?');
-      params.push(opts.accountId);
+      qb.andWhere('cv.account_id = :accountId', { accountId: opts.accountId });
     }
 
-    const rows = this.database.db
-      .prepare(`SELECT * FROM context_vectors WHERE ${conditions.join(' AND ')}`)
-      .all(...params) as ContextVectorRow[];
-
+    const entities = await qb.getMany();
     const limit = opts.limit ?? 20;
     const scored: Array<ContextRecord & { score: number }> = [];
 
-    for (const row of rows) {
-      if (!row.embedding_json) continue;
+    for (const entity of entities) {
+      if (!entity.embeddingJson) continue;
 
       let embedding: number[];
       try {
-        embedding = JSON.parse(row.embedding_json) as number[];
+        embedding = JSON.parse(entity.embeddingJson) as number[];
       } catch {
         continue;
       }
 
       const score = cosineSimilarity(queryVector, embedding);
-      scored.push({ ...this.rowToRecord(row), score });
+      scored.push({ ...this.entityToRecord(entity), score });
     }
 
     scored.sort((a, b) => b.score - a.score);
@@ -348,61 +335,62 @@ export class ContextVectorService {
       targetDirectories?: string[];
     } = {},
   ): Promise<Array<ContextRecord & { score: number }>> {
-    const conditions: string[] = ['embedding_json IS NOT NULL'];
-    const params: unknown[] = [];
+    const qb = this.repo.createQueryBuilder('cv')
+      .where('cv.embedding_json IS NOT NULL');
 
     if (opts.contextType) {
-      conditions.push('context_type = ?');
-      params.push(opts.contextType);
+      qb.andWhere('cv.context_type = :contextType', { contextType: opts.contextType });
     }
     if (opts.accountId) {
-      conditions.push('account_id = ?');
-      params.push(opts.accountId);
+      qb.andWhere('cv.account_id = :accountId', { accountId: opts.accountId });
     }
     if (opts.targetDirectories && opts.targetDirectories.length > 0) {
-      const uriConditions = opts.targetDirectories.map(() => 'uri LIKE ?');
-      conditions.push(`(${uriConditions.join(' OR ')})`);
-      for (const dir of opts.targetDirectories) {
-        params.push(`${dir}%`);
-      }
+      const uriConditions = opts.targetDirectories
+        .map((_, i) => `cv.uri LIKE :dir${i}`)
+        .join(' OR ');
+      const params: Record<string, string> = {};
+      opts.targetDirectories.forEach((dir, i) => {
+        params[`dir${i}`] = `${dir}%`;
+      });
+      qb.andWhere(`(${uriConditions})`, params);
     }
 
-    const rows = this.database.db
-      .prepare(`SELECT * FROM context_vectors WHERE ${conditions.join(' AND ')}`)
-      .all(...params) as ContextVectorRow[];
-
+    const entities = await qb.getMany();
     const limit = opts.limit ?? 5;
     const scored: Array<ContextRecord & { score: number }> = [];
 
-    for (const row of rows) {
-      if (!row.embedding_json) continue;
+    for (const entity of entities) {
+      if (!entity.embeddingJson) continue;
 
       let embedding: number[];
       try {
-        embedding = JSON.parse(row.embedding_json) as number[];
+        embedding = JSON.parse(entity.embeddingJson) as number[];
       } catch {
         continue;
       }
 
       const score = cosineSimilarity(queryVector, embedding);
-      scored.push({ ...this.rowToRecord(row), score });
+      scored.push({ ...this.entityToRecord(entity), score });
     }
 
     scored.sort((a, b) => b.score - a.score);
     return scored.slice(0, limit);
   }
 
-  count(): number {
-    const row = this.database.db
-      .prepare('SELECT COUNT(*) as count FROM context_vectors')
-      .get() as { count: number };
-    return row.count;
+  async count(): Promise<number> {
+    return this.repo.count();
   }
 
   async incrementActiveCount(uri: string): Promise<void> {
-    this.database.db
-      .prepare('UPDATE context_vectors SET active_count = active_count + 1, updated_at = ? WHERE uri = ?')
-      .run(new Date().toISOString(), uri);
+    await this.repo
+      .createQueryBuilder()
+      .update(ContextVectorEntity)
+      .set({
+        activeCount: () => 'active_count + 1',
+        updatedAt: new Date().toISOString(),
+      })
+      .where('uri = :uri', { uri })
+      .execute();
   }
 }
 

@@ -7,6 +7,7 @@ import { DatabaseService } from '../../src/storage/database.service';
 import { tmpdir } from 'os';
 import { mkdtempSync } from 'fs';
 import { join } from 'path';
+import { typeOrmTestImports } from '../helpers/test-typeorm';
 
 function createTempDir(): string {
   return mkdtempSync(join(tmpdir(), 'viking-eq-test-'));
@@ -29,6 +30,7 @@ describe('EmbeddingQueueService', () => {
           isGlobal: true,
           load: [() => ({ storage: { path: tempDir } })],
         }),
+        ...typeOrmTestImports(tempDir),
       ],
       providers: [
         EmbeddingQueueService,

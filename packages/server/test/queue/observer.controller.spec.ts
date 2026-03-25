@@ -11,7 +11,7 @@ function createMockQueueService(stats = { queued: 0, active: 0, processed: 10, e
 }
 
 function createMockContextVector(recordCount = 55) {
-  return { count: jest.fn().mockReturnValue(recordCount) };
+  return { count: jest.fn().mockResolvedValue(recordCount) };
 }
 
 function createMockLlmService(overrides: {
@@ -98,8 +98,8 @@ describe('ObserverController', () => {
   });
 
   describe('GET /observer/vikingdb', () => {
-    it('should return ComponentStatus with record count', () => {
-      const result = controller.getVikingdb();
+    it('should return ComponentStatus with record count', async () => {
+      const result = await controller.getVikingdb();
       expect(result.status).toBe('ok');
 
       const component = result.result as ComponentStatus;
@@ -110,12 +110,10 @@ describe('ObserverController', () => {
       expect(component.status).toContain('TOTAL  55');
     });
 
-    it('should report unhealthy when count() throws', () => {
-      contextVector.count.mockImplementation(() => {
-        throw new Error('DB error');
-      });
+    it('should report unhealthy when count() throws', async () => {
+      contextVector.count.mockRejectedValue(new Error('DB error'));
 
-      const result = controller.getVikingdb();
+      const result = await controller.getVikingdb();
       const component = result.result as ComponentStatus;
       expect(component.is_healthy).toBe(false);
       expect(component.has_errors).toBe(true);
@@ -161,8 +159,8 @@ describe('ObserverController', () => {
   });
 
   describe('GET /observer/system', () => {
-    it('should return SystemStatus with all three components', () => {
-      const result = controller.getSystem();
+    it('should return SystemStatus with all three components', async () => {
+      const result = await controller.getSystem();
       expect(result.status).toBe('ok');
 
       const system = result.result as SystemStatus;
@@ -173,11 +171,11 @@ describe('ObserverController', () => {
       expect(system.components['vlm']).toBeDefined();
     });
 
-    it('should aggregate unhealthy status from components', () => {
+    it('should aggregate unhealthy status from components', async () => {
       llmService.isConfigured.mockReturnValue(false);
       embeddingQueue.getStats.mockReturnValue({ queued: 0, active: 0, processed: 5, errors: 3 });
 
-      const result = controller.getSystem();
+      const result = await controller.getSystem();
       const system = result.result as SystemStatus;
 
       expect(system.is_healthy).toBe(false);

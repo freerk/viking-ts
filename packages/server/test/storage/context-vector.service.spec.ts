@@ -1,7 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { ConfigModule } from '@nestjs/config';
-import { DatabaseService } from '../../src/storage/database.service';
+import { TypeOrmModule } from '@nestjs/typeorm';
 import { ContextVectorService } from '../../src/storage/context-vector.service';
+import { ContextVectorEntity } from '../../src/storage/entities';
 import { tmpdir } from 'os';
 import { mkdtempSync } from 'fs';
 import { join } from 'path';
@@ -19,12 +19,15 @@ describe('ContextVectorService', () => {
 
     module = await Test.createTestingModule({
       imports: [
-        ConfigModule.forRoot({
-          isGlobal: true,
-          load: [() => ({ storage: { path: tempDir } })],
+        TypeOrmModule.forRoot({
+          type: 'better-sqlite3',
+          database: join(tempDir, 'viking.db'),
+          entities: [ContextVectorEntity],
+          synchronize: true,
         }),
+        TypeOrmModule.forFeature([ContextVectorEntity]),
       ],
-      providers: [DatabaseService, ContextVectorService],
+      providers: [ContextVectorService],
     }).compile();
 
     await module.init();
