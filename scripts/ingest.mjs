@@ -17,6 +17,15 @@ const HOME = homedir();
 const DELAY_MS = 200;
 const IDENTITY_FILES = ['SOUL.md', 'IDENTITY.md', 'AGENTS.md', 'USER.md'];
 
+// Extensions walkable as text resources (server handles parsing of binary formats)
+const RESOURCE_EXTENSIONS = [
+  '.md', '.txt', '.rst', '.adoc',
+  '.ts', '.js', '.mjs', '.cjs', '.py', '.go', '.java', '.rs', '.rb', '.php', '.cs', '.cpp', '.c', '.h',
+  '.json', '.yaml', '.yml', '.toml', '.ini',
+  '.html', '.htm',
+  '.pdf', '.docx', '.doc', '.xlsx', '.xls', '.csv', '.pptx', '.ppt',
+];
+
 const counters = {
   identity: { ingested: 0, skipped: 0, existed: 0, errors: 0 },
   workspace: { ingested: 0, skipped: 0, existed: 0, errors: 0 },
@@ -57,6 +66,7 @@ function parseCliArgs() {
   const { values, positionals } = parseArgs({
     options: {
       agent: { type: 'string' },
+      user: { type: 'string' },
       'no-workspace': { type: 'boolean', default: false },
       'no-sessions': { type: 'boolean', default: false },
       'no-identity': { type: 'boolean', default: false },
@@ -81,12 +91,14 @@ function printHelp() {
 
 Options:
   --agent <id>            Only ingest for this agent (default: all agents)
+  --user <id>             Set X-OpenViking-User header (default: "default")
   --no-workspace          Skip workspace MEMORY.md + memory/*.md
   --no-sessions           Skip session .jsonl files
   --no-identity           Skip SOUL.md, IDENTITY.md, AGENTS.md, USER.md
   --force                 Skip dedup checks, re-ingest everything (default: idempotent)
   --resources <dir>       Ingest directory as resources (repeatable)
   --resource-prefix <p>   URI prefix for --resources (default: viking://resources/<dirname>)
+  --no-binary             Skip binary files (PDF, DOCX, XLSX, PPTX) when ingesting resources
   --skills <dir>          Ingest directory of SKILL.md files into /api/v1/skills (repeatable)
   --sync-skills           Delete skills in viking-ts that no longer exist on disk
   --base-url <url>        Server URL (default: http://localhost:1934)
@@ -140,6 +152,20 @@ function loadAgents(filterAgentId) {
   }));
 }
 
+/** Identity headers injected into every request. Set in main(). */
+let identityHeaders = {};
+
+function buildIdentityHeaders(userId, agentId) {
+  const headers = {};
+  if (userId && userId !== 'default') {
+    headers['X-OpenViking-User'] = userId;
+  }
+  if (agentId && agentId !== 'default') {
+    headers['X-OpenViking-Agent'] = agentId;
+  }
+  return headers;
+}
+
 async function post(baseUrl, endpoint, body, dryRun) {
   if (dryRun) {
     console.log(`  [DRY-RUN] POST ${endpoint} → ${JSON.stringify(body).slice(0, 120)}...`);
@@ -147,7 +173,7 @@ async function post(baseUrl, endpoint, body, dryRun) {
   }
   const res = await fetch(`${baseUrl}${endpoint}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...identityHeaders },
     body: JSON.stringify(body),
   });
   if (!res.ok) {
@@ -162,7 +188,10 @@ async function httpDelete(baseUrl, endpoint, dryRun) {
     console.log(`  [DRY-RUN] DELETE ${endpoint}`);
     return;
   }
-  const res = await fetch(`${baseUrl}${endpoint}`, { method: 'DELETE' });
+  const res = await fetch(`${baseUrl}${endpoint}`, {
+    method: 'DELETE',
+    headers: { ...identityHeaders },
+  });
   if (!res.ok && res.status !== 204) {
     const text = await res.text();
     throw new Error(`HTTP ${res.status}: ${text.slice(0, 200)}`);
@@ -170,7 +199,9 @@ async function httpDelete(baseUrl, endpoint, dryRun) {
 }
 
 async function httpGet(baseUrl, endpoint) {
-  const res = await fetch(`${baseUrl}${endpoint}`);
+  const res = await fetch(`${baseUrl}${endpoint}`, {
+    headers: { ...identityHeaders },
+  });
   if (!res.ok) {
     const text = await res.text();
     throw new Error(`HTTP ${res.status}: ${text.slice(0, 200)}`);
@@ -192,7 +223,7 @@ async function fetchExistingUris(baseUrl, force, dryRun) {
   console.log('  Fetching existing items for dedup...');
 
   try {
-    const memRes = await httpGet(baseUrl, '/api/v1/memories?limit=5000');
+    const memRes = await httpGet(baseUrl, '/api/v1/memories?limit=1000');
     const memories = memRes.result ?? memRes.data ?? [];
     for (const m of memories) {
       if (m.uri) {
@@ -217,7 +248,7 @@ async function fetchExistingUris(baseUrl, force, dryRun) {
   }
 
   try {
-    const resRes = await httpGet(baseUrl, '/api/v1/resources?limit=5000');
+    const resRes = await httpGet(baseUrl, '/api/v1/resources?limit=1000');
     const resources = resRes.result ?? resRes.data ?? [];
     for (const r of resources) {
       if (r.uri) existing.resources.add(r.uri);
@@ -255,21 +286,13 @@ async function ingestIdentity(agent, baseUrl, dryRun, existing) {
       continue;
     }
 
-    const uri = `viking://agent/memories/identity/${fname}`;
-
-    if (memoryExists(existing, agent.id, uri)) {
-      labels.push(`${fname} (exists)`);
-      counters.identity.existed++;
-      continue;
-    }
-
     try {
       await post(baseUrl, '/api/v1/memories', {
         text: content,
         type: 'agent',
         category: 'profile',
         agentId: agent.id,
-        uri,
+        userId: agent.userId,
       }, dryRun);
       labels.push(fname);
       counters.identity.ingested++;
@@ -317,13 +340,6 @@ async function ingestWorkspace(agent, baseUrl, dryRun, existing) {
     }
 
     const label = relative(agent.workspace, file);
-    const uri = `viking://agent/memories/workspace/${basename(file)}`;
-
-    if (memoryExists(existing, agent.id, uri)) {
-      labels.push(`${label} (skipped, exists)`);
-      counters.workspace.existed++;
-      continue;
-    }
 
     try {
       await post(baseUrl, '/api/v1/memories', {
@@ -331,7 +347,7 @@ async function ingestWorkspace(agent, baseUrl, dryRun, existing) {
         type: 'agent',
         category: 'general',
         agentId: agent.id,
-        uri,
+        userId: agent.userId,
       }, dryRun);
       labels.push(`${label} \u2714`);
       counters.workspace.ingested++;
@@ -417,6 +433,7 @@ async function ingestSessions(agent, baseUrl, dryRun) {
       const result = await post(baseUrl, '/api/v1/sessions/capture', {
         messages,
         agentId: agent.id,
+        userId: agent.userId,
       }, dryRun);
       const count = dryRun ? '?' : (result.result?.memories?.length ?? 0);
       console.log(`    + ${file} -> ${count} memories (${messages.length} msgs)`);
@@ -439,20 +456,17 @@ async function ingestResources(dirs, resourcePrefix, baseUrl, dryRun, existing) 
 
     console.log(`\n  Resources from ${resolvedDir} (prefix: ${prefix})...`);
 
-    const files = walkFiles(resolvedDir);
-    for (const file of files) {
-      let content;
-      try {
-        content = readFile(file);
-      } catch {
-        counters.resources.skipped++;
-        continue;
-      }
-      if (!content || content.length < 20) {
-        counters.resources.skipped++;
-        continue;
-      }
+    const TEXT_EXTS = new Set([
+      '.md', '.txt', '.rst', '.adoc',
+      '.ts', '.js', '.mjs', '.cjs', '.py', '.go', '.java', '.rs', '.rb', '.php', '.cs', '.cpp', '.c', '.h',
+      '.json', '.yaml', '.yml', '.toml', '.ini', '.html', '.htm',
+    ]);
+    const BINARY_EXTS = new Set(['.pdf', '.docx', '.doc', '.xlsx', '.xls', '.csv', '.pptx', '.ppt']);
 
+    const files = walkFiles(resolvedDir, RESOURCE_EXTENSIONS);
+    for (const file of files) {
+      const ext = file.slice(file.lastIndexOf('.')).toLowerCase();
+      const isBinary = BINARY_EXTS.has(ext);
       const relPath = relative(resolvedDir, file);
       const uri = `${prefix}/${relPath}`;
 
@@ -462,13 +476,28 @@ async function ingestResources(dirs, resourcePrefix, baseUrl, dryRun, existing) 
         continue;
       }
 
+      let body;
+      if (isBinary) {
+        // Send file path — server parses binary format
+        body = { path: file, to: uri, reason: `resource from ${relPath}` };
+      } else {
+        let content;
+        try {
+          content = readFile(file);
+        } catch {
+          counters.resources.skipped++;
+          continue;
+        }
+        if (!content || content.length < 20) {
+          counters.resources.skipped++;
+          continue;
+        }
+        body = { text: content, to: uri, reason: `resource from ${relPath}` };
+      }
+
       try {
-        await post(baseUrl, '/api/v1/resources', {
-          title: `${dirName} > ${relPath.replace(/\//g, ' > ').replace('.md', '')}`,
-          text: content,
-          uri,
-        }, dryRun);
-        console.log(`    + ${relPath}`);
+        await post(baseUrl, '/api/v1/resources', body, dryRun);
+        console.log(`    + ${relPath}${isBinary ? ` [${ext.slice(1)}]` : ''}`);
         counters.resources.ingested++;
       } catch (e) {
         console.error(`    x ${relPath}: ${e.message}`);
@@ -556,10 +585,12 @@ async function ingestSkills(dirs, baseUrl, dryRun, existing) {
 
       try {
         await post(baseUrl, '/api/v1/skills', {
-          name,
-          description,
-          content,
-          tags,
+          data: {
+            name,
+            description,
+            content,
+            tags,
+          },
         }, dryRun);
         console.log(`    + ${name}`);
         counters.skills.ingested++;
@@ -625,6 +656,10 @@ async function main() {
   const resourcePrefix = opts['resource-prefix'];
   const skillDirs = opts.skills ?? [];
   const syncSkillsFlag = opts['sync-skills'] ?? false;
+  const userId = opts.user ?? 'default';
+
+  // Set global identity headers for all requests
+  identityHeaders = buildIdentityHeaders(userId, opts.agent ?? 'default');
 
   console.log('viking-ts ingest');
   console.log(`  Target: ${baseUrl}`);
@@ -651,6 +686,8 @@ async function main() {
 
   // Per-agent ingestion
   for (const agent of agents) {
+    // Attach userId so ingestion functions can include it in memory POSTs
+    agent.userId = userId;
     console.log(`\n--- Agent: ${agent.id} ---`);
 
     if (!skipIdentity) {

@@ -89,3 +89,16 @@ export interface VikingNode {
   type: 'file' | 'directory';
   children?: VikingNode[];
 }
+
+export interface ComponentStatus {
+  name: string;
+  is_healthy: boolean;
+  has_errors: boolean;
+  status: string;
+}
+
+export interface SystemStatus {
+  is_healthy: boolean;
+  errors: string[];
+  components: Record<string, ComponentStatus>;
+}

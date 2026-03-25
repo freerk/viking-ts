@@ -1,17 +1,13 @@
 import { Controller, Get, Query, BadRequestException } from '@nestjs/common';
 import { ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
-import { VikingUriService } from './viking-uri.service';
-import { MetadataStoreService } from '../storage/metadata-store.service';
+import { VfsService, TreeNode } from '../storage/vfs.service';
 import { okResponse } from '../shared/api-response.helper';
 import { ApiResponse, VikingNode } from '../shared/types';
 
 @ApiTags('viking-uri')
 @Controller('api/v1')
 export class VikingUriController {
-  constructor(
-    private readonly vikingUri: VikingUriService,
-    private readonly metadataStore: MetadataStoreService,
-  ) {}
+  constructor(private readonly vfs: VfsService) {}
 
   @Get('ls')
   @ApiOperation({ summary: 'List contents at a Viking URI' })
@@ -23,25 +19,8 @@ export class VikingUriController {
       throw new BadRequestException('uri query parameter is required');
     }
 
-    const parsed = this.vikingUri.parse(uri);
-    const prefix = `viking://${parsed.fullPath}`;
-
-    const allUris: string[] = [];
-
-    if (parsed.scope === 'resources' || parsed.scope === 'user' || parsed.scope === 'agent') {
-      if (parsed.scope === 'resources') {
-        const resources = await this.metadataStore.listResources(1000);
-        allUris.push(...resources.map((r) => r.uri));
-      } else {
-        const memories = await this.metadataStore.listMemories({
-          type: parsed.scope === 'user' ? 'user' : 'agent',
-          limit: 1000,
-        });
-        allUris.push(...memories.map((m) => m.uri));
-      }
-    }
-
-    const children = allUris.filter((u) => u.startsWith(prefix) && u !== uri);
+    const entries = await this.vfs.ls(uri);
+    const children = entries.map((e) => e.uri);
 
     return okResponse({ uri, children }, startTime);
   }
@@ -61,25 +40,23 @@ export class VikingUriController {
     }
 
     const depth = depthStr ? parseInt(depthStr, 10) : 2;
-    const parsed = this.vikingUri.parse(uri);
-    const prefix = `viking://${parsed.fullPath}`;
+    const treeResult = await this.vfs.tree(uri, { levelLimit: depth });
 
-    const allUris: string[] = [];
-
-    if (parsed.scope === 'resources') {
-      const resources = await this.metadataStore.listResources(1000);
-      allUris.push(...resources.map((r) => r.uri));
-    } else {
-      const memories = await this.metadataStore.listMemories({
-        type: parsed.scope === 'user' ? 'user' : 'agent',
-        limit: 1000,
-      });
-      allUris.push(...memories.map((m) => m.uri));
-    }
-
-    const filtered = allUris.filter((u) => u.startsWith(prefix));
-    const tree = this.vikingUri.buildTree(filtered, uri, depth);
-
-    return okResponse(tree, startTime);
+    const vikingNode = treeNodeToVikingNode(treeResult);
+    return okResponse(vikingNode, startTime);
   }
+}
+
+function treeNodeToVikingNode(node: TreeNode): VikingNode {
+  const result: VikingNode = {
+    uri: node.uri,
+    name: node.name,
+    type: node.isDir ? 'directory' : 'file',
+  };
+
+  if (node.children) {
+    result.children = node.children.map((c) => treeNodeToVikingNode(c));
+  }
+
+  return result;
 }

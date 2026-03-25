@@ -3,9 +3,9 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 
 export class CreateMemoryDto {
-  @ApiProperty({ description: 'Memory text content', maxLength: 10000 })
+  @ApiProperty({ description: 'Memory text content', maxLength: 50000 })
   @IsString()
-  @MaxLength(10000)
+  @MaxLength(50000)
   text!: string;
 
   @ApiPropertyOptional({ enum: ['user', 'agent'], default: 'user' })

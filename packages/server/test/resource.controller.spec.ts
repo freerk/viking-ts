@@ -1,8 +1,10 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication, ValidationPipe, NotFoundException, BadRequestException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import request from 'supertest';
 import { ResourceController } from '../src/resource/resource.controller';
 import { ResourceService } from '../src/resource/resource.service';
+
 import { ResourceRecord } from '../src/shared/types';
 
 function makeResourceRecord(overrides: Partial<ResourceRecord> = {}): ResourceRecord {
@@ -24,8 +26,10 @@ describe('ResourceController (HTTP)', () => {
   let app: INestApplication;
   let resourceService: Partial<Record<keyof ResourceService, jest.Mock>>;
 
+
   beforeEach(async () => {
     resourceService = {
+      addResource: jest.fn(),
       createResource: jest.fn(),
       searchResources: jest.fn(),
       listResources: jest.fn(),
@@ -37,14 +41,13 @@ describe('ResourceController (HTTP)', () => {
       controllers: [ResourceController],
       providers: [
         { provide: ResourceService, useValue: resourceService },
+        { provide: ConfigService, useValue: { get: () => '/tmp/viking-test' } },
       ],
     }).compile();
 
     app = module.createNestApplication();
     app.useGlobalPipes(
       new ValidationPipe({
-        whitelist: true,
-        forbidNonWhitelisted: true,
         transform: true,
       }),
     );
@@ -55,93 +58,23 @@ describe('ResourceController (HTTP)', () => {
     await app.close();
   });
 
-  describe('POST /api/v1/resources', () => {
-    it('should create a resource with text and return 201', async () => {
-      const record = makeResourceRecord();
-      resourceService.createResource!.mockResolvedValue(record);
-
-      const response = await request(app.getHttpServer())
-        .post('/api/v1/resources')
-        .send({ text: 'Some documentation content', title: 'API Docs' })
-        .expect(201);
-
-      expect(response.body.status).toBe('ok');
-      expect(response.body.result.id).toBe('res-123');
-      expect(response.body.result.title).toBe('Test resource');
-    });
-
-    it('should create a resource with URL only', async () => {
-      const record = makeResourceRecord({ sourceUrl: 'https://example.com' });
-      resourceService.createResource!.mockResolvedValue(record);
-
-      await request(app.getHttpServer())
-        .post('/api/v1/resources')
-        .send({ url: 'https://example.com' })
-        .expect(201);
-
-      expect(resourceService.createResource).toHaveBeenCalledWith(
-        expect.objectContaining({ url: 'https://example.com' }),
-      );
-    });
-
-    it('should return 400 for unknown fields', async () => {
-      await request(app.getHttpServer())
-        .post('/api/v1/resources')
-        .send({ text: 'Test', badField: 'nope' })
-        .expect(400);
-    });
-
-    it('should handle service BadRequestException', async () => {
-      resourceService.createResource!.mockRejectedValue(
-        new BadRequestException('Either text or url must be provided'),
-      );
-
+  describe('POST /api/v1/resources (OpenViking)', () => {
+    it('should return 400 when neither path nor temp_path provided', async () => {
       await request(app.getHttpServer())
         .post('/api/v1/resources')
         .send({})
         .expect(400);
     });
 
-    it('should pass custom uri to service', async () => {
-      const record = makeResourceRecord({ uri: 'viking://resources/custom/path.md' });
-      resourceService.createResource!.mockResolvedValue(record);
-
-      const response = await request(app.getHttpServer())
-        .post('/api/v1/resources')
-        .send({ text: 'Content', uri: 'viking://resources/custom/path.md' })
-        .expect(201);
-
-      expect(resourceService.createResource).toHaveBeenCalledWith(
-        expect.objectContaining({ uri: 'viking://resources/custom/path.md' }),
+    it('should return 400 when both to and parent provided', async () => {
+      resourceService.addResource!.mockRejectedValue(
+        new BadRequestException("Cannot specify both 'to' and 'parent'"),
       );
-      expect(response.body.result.uri).toBe('viking://resources/custom/path.md');
-    });
-
-    it('should create resource with both text and url', async () => {
-      const record = makeResourceRecord({ sourceUrl: 'https://example.com' });
-      resourceService.createResource!.mockResolvedValue(record);
 
       await request(app.getHttpServer())
         .post('/api/v1/resources')
-        .send({ text: 'Content', url: 'https://example.com', title: 'Both' })
-        .expect(201);
-
-      expect(resourceService.createResource).toHaveBeenCalledWith(
-        expect.objectContaining({ text: 'Content', url: 'https://example.com', title: 'Both' }),
-      );
-    });
-
-    it('should include time field in response', async () => {
-      const record = makeResourceRecord();
-      resourceService.createResource!.mockResolvedValue(record);
-
-      const response = await request(app.getHttpServer())
-        .post('/api/v1/resources')
-        .send({ text: 'Time test' })
-        .expect(201);
-
-      expect(response.body.time).toBeDefined();
-      expect(typeof response.body.time).toBe('number');
+        .send({ path: '/tmp/test.md', to: 'viking://resources/a.md', parent: 'viking://resources' })
+        .expect(400);
     });
   });
 

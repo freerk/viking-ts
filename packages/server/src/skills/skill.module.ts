@@ -1,10 +1,10 @@
 import { Module } from '@nestjs/common';
 import { SkillService } from './skill.service';
 import { SkillController } from './skill.controller';
-import { VikingUriModule } from '../viking-uri/viking-uri.module';
+import { QueueModule } from '../queue/queue.module';
 
 @Module({
-  imports: [VikingUriModule],
+  imports: [QueueModule],
   providers: [SkillService],
   controllers: [SkillController],
   exports: [SkillService],

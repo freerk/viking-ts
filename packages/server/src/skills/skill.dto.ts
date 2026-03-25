@@ -33,6 +33,33 @@ export class CreateSkillDto {
   tags?: string[];
 }
 
+export class AddSkillDto {
+  @ApiPropertyOptional({ description: 'OpenViking data wrapper (skill dict or MCP tool)' })
+  @IsOptional()
+  data?: Record<string, unknown>;
+
+  @ApiPropertyOptional({ description: 'Skill name (legacy direct shape)' })
+  @IsOptional()
+  @IsString()
+  name?: string;
+
+  @ApiPropertyOptional({ description: 'Skill description (legacy direct shape)' })
+  @IsOptional()
+  @IsString()
+  description?: string;
+
+  @ApiPropertyOptional({ description: 'Skill content (legacy direct shape)' })
+  @IsOptional()
+  @IsString()
+  content?: string;
+
+  @ApiPropertyOptional({ description: 'Tags for categorization (legacy direct shape)', type: [String] })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  tags?: string[];
+}
+
 export class SearchSkillsQueryDto {
   @ApiProperty({ description: 'Search query' })
   @IsString()
