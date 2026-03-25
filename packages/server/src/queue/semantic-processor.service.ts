@@ -108,6 +108,8 @@ export class SemanticProcessorService {
         continue;
       }
 
+      const existing = await this.contextVectors.getByUri(file.uri).catch(() => undefined);
+
       this.embeddingQueue.enqueue({
         uri: file.uri,
         text: content,
@@ -118,6 +120,7 @@ export class SemanticProcessorService {
         parentUri: job.uri,
         accountId: job.accountId,
         ownerSpace: job.ownerSpace,
+        ...(existing?.tags ? { tags: existing.tags } : {}),
       });
 
       if (content.length > memoryChunkChars) {
@@ -126,6 +129,7 @@ export class SemanticProcessorService {
           const chunk = chunks[i];
           if (!chunk) continue;
           const chunkUri = `${file.uri}#chunk_${String(i).padStart(4, '0')}`;
+          const existingChunk = await this.contextVectors.getByUri(chunkUri).catch(() => undefined);
           this.embeddingQueue.enqueue({
             uri: chunkUri,
             text: chunk,
@@ -136,6 +140,7 @@ export class SemanticProcessorService {
             parentUri: file.uri,
             accountId: job.accountId,
             ownerSpace: job.ownerSpace,
+            ...(existingChunk?.tags ? { tags: existingChunk.tags } : {}),
           });
         }
       }
