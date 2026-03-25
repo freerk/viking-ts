@@ -38,6 +38,12 @@ export class CreateMemoryDto {
   @IsString()
   @MaxLength(500)
   uri?: string;
+
+  @ApiPropertyOptional({ description: 'Account scope (defaults to "default")' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  accountId?: string;
 }
 
 export class SearchMemoriesQueryDto {
@@ -106,6 +112,12 @@ export class ListMemoriesQueryDto {
   @IsNumber()
   @Min(0)
   offset?: number;
+
+  @ApiPropertyOptional({ description: 'Account scope (defaults to "default")' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  accountId?: string;
 }
 
 export class CaptureSessionDto {
@@ -122,4 +134,10 @@ export class CaptureSessionDto {
   @IsOptional()
   @IsString()
   userId?: string;
+
+  @ApiPropertyOptional({ description: 'Account scope (defaults to "default")' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  accountId?: string;
 }

@@ -11,6 +11,10 @@ export interface EmbeddingJob {
   abstract: string;
   name: string;
   parentUri: string | null;
+  /**
+   * Scoping identifier. For memories/skills: flows from request context
+   * (ctx.user.accountId). For resources: always 'default' (shared/global).
+   */
   accountId: string;
   ownerSpace: string;
   description?: string;

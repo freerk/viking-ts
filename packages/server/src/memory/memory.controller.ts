@@ -22,6 +22,7 @@ export class MemoryController {
       agentId: dto.agentId,
       userId: dto.userId,
       uri: dto.uri,
+      accountId: dto.accountId,
     });
     return okResponse(memory, startTime);
   }
@@ -50,6 +51,7 @@ export class MemoryController {
       category: query.category as MemoryCategory | undefined,
       limit: query.limit ?? 100,
       offset: query.offset ?? 0,
+      accountId: query.accountId,
     });
     return okResponse(memories, startTime);
   }

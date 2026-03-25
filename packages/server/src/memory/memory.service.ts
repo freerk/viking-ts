@@ -62,11 +62,13 @@ export class MemoryService {
     agentId?: string;
     userId?: string;
     uri?: string;
+    accountId?: string;
   }): Promise<MemoryRecord> {
     const id = uuid();
     const now = new Date().toISOString();
     const type: MemoryType = params.type ?? 'user';
     const category: MemoryCategory = params.category ?? 'general';
+    const accountId = params.accountId ?? 'default';
     const uri = params.uri ?? this.buildMemoryUri(id, type, params.agentId, params.userId);
     const parentUri = this.parentUriForMemory(type, params.agentId, params.userId);
     const ownerSpace = type === 'agent'
@@ -87,7 +89,7 @@ export class MemoryService {
         abstract: l0Abstract,
         name: `${id}.md`,
         parentUri,
-        accountId: 'default',
+        accountId,
         ownerSpace,
         description: l1Overview || undefined,
         tags: category,
@@ -108,7 +110,7 @@ export class MemoryService {
         name: `${id}.md`,
         tags: category,
         description: l1Overview || undefined,
-        accountId: 'default',
+        accountId,
         ownerSpace,
         embedding,
       });
@@ -118,13 +120,13 @@ export class MemoryService {
       this.semanticQueue.enqueue({
         uri: parentUri,
         contextType: 'memory',
-        accountId: 'default',
+        accountId,
         ownerSpace,
       });
     }
 
     const memory: MemoryRecord = {
-      id: ContextVectorService.generateId('default', uri),
+      id: ContextVectorService.generateId(accountId, uri),
       text: params.text,
       type,
       category,
@@ -190,9 +192,11 @@ export class MemoryService {
     category?: MemoryCategory;
     limit?: number;
     offset?: number;
+    accountId?: string;
   }): Promise<MemoryRecord[]> {
+    const accountId = filters.accountId ?? 'default';
     // When both userId and agentId are provided, fetch both user-space and agent-space memories
-    // and merge them — matching OpenViking behaviour where a user+agent query returns all
+    // and merge them, matching OpenViking behaviour where a user+agent query returns all
     // memories belonging to that user (user-space) and that agent (agent-space).
     let records: Awaited<ReturnType<typeof this.contextVectors.listByContextType>>;
 
@@ -201,13 +205,13 @@ export class MemoryService {
       const userSpace = filters.userId;
       const [agentRecords, userRecords] = await Promise.all([
         this.contextVectors.listByContextType('memory', {
-          accountId: 'default',
+          accountId,
           ownerSpace: agentSpace,
           limit: filters.limit,
           offset: filters.offset,
         }),
         this.contextVectors.listByContextType('memory', {
-          accountId: 'default',
+          accountId,
           ownerSpace: userSpace,
           limit: filters.limit,
           offset: filters.offset,
@@ -228,7 +232,7 @@ export class MemoryService {
         ownerSpace = filters.userId;
       }
       records = await this.contextVectors.listByContextType('memory', {
-        accountId: 'default',
+        accountId,
         ownerSpace,
         limit: filters.limit,
         offset: filters.offset,
@@ -283,16 +287,18 @@ export class MemoryService {
     messages: Array<{ role: string; content: string }>,
     agentId?: string,
     userId?: string,
+    accountId?: string,
   ): Promise<MemoryRecord[]> {
+    const resolvedAccountId = accountId ?? 'default';
     const sessionId = uuid();
     const now = new Date().toISOString();
 
     this.database.db
       .prepare(
         `INSERT INTO sessions (session_id, account_id, user_id, agent_id, status, message_count, contexts_used, skills_used, created_at, updated_at)
-         VALUES (?, 'default', ?, ?, 'active', 0, 0, 0, ?, ?)`,
+         VALUES (?, ?, ?, ?, 'active', 0, 0, 0, ?, ?)`,
       )
-      .run(sessionId, userId ?? 'default', agentId ?? 'default', now, now);
+      .run(sessionId, resolvedAccountId, userId ?? 'default', agentId ?? 'default', now, now);
 
     for (const msg of messages) {
       this.database.db
@@ -320,6 +326,7 @@ export class MemoryService {
           category: (item.category as MemoryCategory) || 'general',
           agentId,
           userId,
+          accountId: resolvedAccountId,
         });
         createdMemories.push(memory);
       } catch (err) {

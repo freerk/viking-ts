@@ -18,6 +18,7 @@ export class SessionController {
       dto.messages,
       dto.agentId,
       dto.userId,
+      dto.accountId,
     );
     return okResponse(
       { memoriesExtracted: memories.length, memories },

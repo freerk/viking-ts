@@ -91,6 +91,7 @@ describe('SessionController (HTTP)', () => {
         [{ role: 'user', content: 'Test' }],
         'agent-x',
         'user-y',
+        undefined,
       );
     });
 
@@ -173,6 +174,7 @@ describe('SessionController (HTTP)', () => {
 
       expect(memoryService.captureSession).toHaveBeenCalledWith(
         [{ role: 'user', content: 'Hello' }],
+        undefined,
         undefined,
         undefined,
       );
