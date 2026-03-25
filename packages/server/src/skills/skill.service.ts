@@ -141,7 +141,11 @@ export class SkillService {
       contextType: 'skill',
     });
 
-    return results.map((r) => ({
+    const filtered = results.filter(
+      (r) => !r.uri.endsWith('/.abstract.md') && !r.uri.endsWith('/.overview.md'),
+    );
+
+    return filtered.map((r) => ({
       id: r.id,
       uri: r.uri,
       text: r.abstract || r.description,
@@ -185,7 +189,9 @@ export class SkillService {
       offset,
     });
 
-    let filtered = records;
+    let filtered = records.filter(
+      (r) => !r.uri.endsWith('/.abstract.md') && !r.uri.endsWith('/.overview.md'),
+    );
     if (tag) {
       filtered = filtered.filter((r) => {
         const recordTags = r.tags ? r.tags.split(',') : [];
