@@ -110,18 +110,19 @@ export class SemanticProcessorService {
 
       const existing = await this.contextVectors.getByUri(file.uri).catch(() => undefined);
 
-      this.embeddingQueue.enqueue({
-        uri: file.uri,
-        text: content,
-        contextType: 'memory',
-        level: 2,
-        abstract: content.slice(0, abstractMaxChars),
-        name: file.name,
-        parentUri: job.uri,
-        accountId: job.accountId,
-        ownerSpace: job.ownerSpace,
-        ...(existing?.tags ? { tags: existing.tags } : {}),
-      });
+      if (!existing) {
+        this.embeddingQueue.enqueue({
+          uri: file.uri,
+          text: content,
+          contextType: 'memory',
+          level: 2,
+          abstract: content.slice(0, abstractMaxChars),
+          name: file.name,
+          parentUri: job.uri,
+          accountId: job.accountId,
+          ownerSpace: job.ownerSpace,
+        });
+      }
 
       if (content.length > memoryChunkChars) {
         const chunks = chunkText(content, memoryChunkChars, memoryChunkOverlap);
@@ -130,18 +131,19 @@ export class SemanticProcessorService {
           if (!chunk) continue;
           const chunkUri = `${file.uri}#chunk_${String(i).padStart(4, '0')}`;
           const existingChunk = await this.contextVectors.getByUri(chunkUri).catch(() => undefined);
-          this.embeddingQueue.enqueue({
-            uri: chunkUri,
-            text: chunk,
-            contextType: 'memory',
-            level: 2,
-            abstract: chunk.slice(0, abstractMaxChars),
-            name: `${file.name}#chunk_${String(i).padStart(4, '0')}`,
-            parentUri: file.uri,
-            accountId: job.accountId,
-            ownerSpace: job.ownerSpace,
-            ...(existingChunk?.tags ? { tags: existingChunk.tags } : {}),
-          });
+          if (!existingChunk) {
+            this.embeddingQueue.enqueue({
+              uri: chunkUri,
+              text: chunk,
+              contextType: 'memory',
+              level: 2,
+              abstract: chunk.slice(0, abstractMaxChars),
+              name: `${file.name}#chunk_${String(i).padStart(4, '0')}`,
+              parentUri: file.uri,
+              accountId: job.accountId,
+              ownerSpace: job.ownerSpace,
+            });
+          }
         }
       }
 
