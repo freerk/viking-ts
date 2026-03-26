@@ -2,7 +2,7 @@ import { Entity, Column, PrimaryColumn, Index } from 'typeorm';
 
 @Entity('session_messages')
 @Index('idx_sm_session', ['sessionId'])
-export class SessionMessageSqliteEntity {
+export class SessionMessageEntity {
   @PrimaryColumn({ type: 'text' })
   id!: string;
 

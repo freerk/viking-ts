@@ -1,8 +1,10 @@
 import { Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 import { v4 as uuid } from 'uuid';
 import { VfsService } from '../storage/vfs.service';
 import { ContextVectorService } from '../storage/context-vector.service';
-import { DatabaseService } from '../storage/database.service';
+import { SessionEntity, SessionMessageEntity } from '../storage/entities';
 import { EmbeddingService } from '../embedding/embedding.service';
 import { LlmService } from '../llm/llm.service';
 import { EmbeddingQueueService } from '../queue/embedding-queue.service';
@@ -22,7 +24,10 @@ export class MemoryService {
   constructor(
     private readonly vfs: VfsService,
     private readonly contextVectors: ContextVectorService,
-    private readonly database: DatabaseService,
+    @InjectRepository(SessionEntity)
+    private readonly sessionRepo: Repository<SessionEntity>,
+    @InjectRepository(SessionMessageEntity)
+    private readonly sessionMessageRepo: Repository<SessionMessageEntity>,
     private readonly embeddingService: EmbeddingService,
     private readonly llmService: LlmService,
     @Optional() private readonly embeddingQueue?: EmbeddingQueueService,
@@ -293,20 +298,27 @@ export class MemoryService {
     const sessionId = uuid();
     const now = new Date().toISOString();
 
-    this.database.db
-      .prepare(
-        `INSERT INTO sessions (session_id, account_id, user_id, agent_id, status, message_count, contexts_used, skills_used, created_at, updated_at)
-         VALUES (?, ?, ?, ?, 'active', 0, 0, 0, ?, ?)`,
-      )
-      .run(sessionId, resolvedAccountId, userId ?? 'default', agentId ?? 'default', now, now);
+    await this.sessionRepo.insert({
+      sessionId,
+      accountId: resolvedAccountId,
+      userId: userId ?? 'default',
+      agentId: agentId ?? 'default',
+      status: 'active',
+      messageCount: 0,
+      contextsUsed: 0,
+      skillsUsed: 0,
+      createdAt: now,
+      updatedAt: now,
+    });
 
     for (const msg of messages) {
-      this.database.db
-        .prepare(
-          `INSERT INTO session_messages (id, session_id, role, content, created_at)
-           VALUES (?, ?, ?, ?, ?)`,
-        )
-        .run(uuid(), sessionId, msg.role, msg.content, now);
+      await this.sessionMessageRepo.insert({
+        id: uuid(),
+        sessionId,
+        role: msg.role,
+        content: msg.content,
+        createdAt: now,
+      });
     }
 
     let extracted: Array<{ text: string; category: string }> = [];

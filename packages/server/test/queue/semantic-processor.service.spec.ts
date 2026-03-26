@@ -5,7 +5,6 @@ import { EmbeddingQueueService } from '../../src/queue/embedding-queue.service';
 import { EmbeddingService } from '../../src/embedding/embedding.service';
 import { VfsService } from '../../src/storage/vfs.service';
 import { ContextVectorService } from '../../src/storage/context-vector.service';
-import { DatabaseService } from '../../src/storage/database.service';
 import { LlmService } from '../../src/llm/llm.service';
 import { tmpdir } from 'os';
 import { mkdtempSync } from 'fs';
@@ -54,7 +53,6 @@ describe('SemanticProcessorService', () => {
       ],
       providers: [
         SemanticProcessorService,
-        DatabaseService,
         VfsService,
         ContextVectorService,
         {
@@ -218,7 +216,6 @@ describe('SemanticProcessorService', () => {
         ],
         providers: [
           SemanticProcessorService,
-          DatabaseService,
           VfsService,
           ContextVectorService,
           {
@@ -291,7 +288,6 @@ describe('SemanticProcessorService', () => {
         ],
         providers: [
           SemanticProcessorService,
-          DatabaseService,
           VfsService,
           ContextVectorService,
           {

@@ -10,16 +10,16 @@ import {
   ContextVectorEntity,
   VfsNodeEntity,
   RelationEntity,
-  SessionSqliteEntity,
-  SessionMessageSqliteEntity,
+  SessionEntity,
+  SessionMessageEntity,
 } from './entities';
 
 const entities = [
   ContextVectorEntity,
   VfsNodeEntity,
   RelationEntity,
-  SessionSqliteEntity,
-  SessionMessageSqliteEntity,
+  SessionEntity,
+  SessionMessageEntity,
 ];
 
 @Global()

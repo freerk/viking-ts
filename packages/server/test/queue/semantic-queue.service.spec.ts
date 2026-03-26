@@ -3,10 +3,10 @@ import { ConfigModule } from '@nestjs/config';
 import { SemanticQueueService } from '../../src/queue/semantic-queue.service';
 import { SemanticProcessorService } from '../../src/queue/semantic-processor.service';
 import { VfsService } from '../../src/storage/vfs.service';
-import { DatabaseService } from '../../src/storage/database.service';
 import { tmpdir } from 'os';
 import { mkdtempSync } from 'fs';
 import { join } from 'path';
+import { typeOrmTestImports } from '../helpers/test-typeorm';
 
 function createTempDir(): string {
   return mkdtempSync(join(tmpdir(), 'viking-sq-test-'));
@@ -28,10 +28,10 @@ describe('SemanticQueueService', () => {
           isGlobal: true,
           load: [() => ({ storage: { path: tempDir } })],
         }),
+        ...typeOrmTestImports(tempDir),
       ],
       providers: [
         SemanticQueueService,
-        DatabaseService,
         VfsService,
         {
           provide: SemanticProcessorService,

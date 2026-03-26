@@ -3,11 +3,11 @@ import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import request from 'supertest';
 import { VikingUriController } from '../src/viking-uri/viking-uri.controller';
-import { DatabaseService } from '../src/storage/database.service';
 import { VfsService } from '../src/storage/vfs.service';
 import { tmpdir } from 'os';
 import { mkdtempSync } from 'fs';
 import { join } from 'path';
+import { typeOrmTestImports } from './helpers/test-typeorm';
 
 function createTempDir(): string {
   return mkdtempSync(join(tmpdir(), 'viking-uri-ctrl-test-'));
@@ -26,9 +26,10 @@ describe('VikingUriController (HTTP)', () => {
           isGlobal: true,
           load: [() => ({ storage: { path: tempDir } })],
         }),
+        ...typeOrmTestImports(tempDir),
       ],
       controllers: [VikingUriController],
-      providers: [DatabaseService, VfsService],
+      providers: [VfsService],
     }).compile();
 
     await module.init();

@@ -1,11 +1,11 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigModule } from '@nestjs/config';
-import { DatabaseService } from '../../src/storage/database.service';
 import { RelationsService } from '../../src/storage/relations.service';
 import { InvalidUriError } from '../../src/shared/errors';
 import { tmpdir } from 'os';
 import { mkdtempSync } from 'fs';
 import { join } from 'path';
+import { typeOrmTestImports } from '../helpers/test-typeorm';
 
 function createTempDir(): string {
   return mkdtempSync(join(tmpdir(), 'viking-rel-test-'));
@@ -24,8 +24,9 @@ describe('RelationsService', () => {
           isGlobal: true,
           load: [() => ({ storage: { path: tempDir } })],
         }),
+        ...typeOrmTestImports(tempDir),
       ],
-      providers: [DatabaseService, RelationsService],
+      providers: [RelationsService],
     }).compile();
 
     await module.init();

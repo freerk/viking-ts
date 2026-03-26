@@ -1,7 +1,7 @@
 import { Entity, Column, PrimaryColumn } from 'typeorm';
 
 @Entity('sessions')
-export class SessionSqliteEntity {
+export class SessionEntity {
   @PrimaryColumn({ name: 'session_id', type: 'text' })
   sessionId!: string;
 

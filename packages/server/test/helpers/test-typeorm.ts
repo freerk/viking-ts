@@ -1,10 +1,23 @@
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { join } from 'path';
-import { ContextVectorEntity } from '../../src/storage/entities';
+import {
+  ContextVectorEntity,
+  VfsNodeEntity,
+  RelationEntity,
+  SessionEntity,
+  SessionMessageEntity,
+} from '../../src/storage/entities';
+
+const entities = [
+  ContextVectorEntity,
+  VfsNodeEntity,
+  RelationEntity,
+  SessionEntity,
+  SessionMessageEntity,
+];
 
 /**
- * Returns TypeORM module imports for integration tests that need
- * ContextVectorService (which now uses TypeORM Repository).
+ * Returns TypeORM module imports for integration tests.
  *
  * Usage: spread into the `imports` array of your TestingModule.
  */
@@ -13,9 +26,9 @@ export function typeOrmTestImports(tempDir: string) {
     TypeOrmModule.forRoot({
       type: 'better-sqlite3',
       database: join(tempDir, 'viking.db'),
-      entities: [ContextVectorEntity],
+      entities,
       synchronize: true,
     }),
-    TypeOrmModule.forFeature([ContextVectorEntity]),
+    TypeOrmModule.forFeature(entities),
   ];
 }

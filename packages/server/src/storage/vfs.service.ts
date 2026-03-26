@@ -1,5 +1,7 @@
 import { Injectable } from '@nestjs/common';
-import { DatabaseService } from './database.service';
+import { InjectRepository } from '@nestjs/typeorm';
+import { DataSource, Like, Repository } from 'typeorm';
+import { VfsNodeEntity } from './entities';
 import { InvalidUriError, NotFoundError, ConflictError } from '../shared/errors';
 
 export interface VfsEntry {
@@ -36,24 +38,16 @@ export interface TreeOptions extends LsOptions {
   levelLimit?: number;
 }
 
-interface VfsRow {
-  uri: string;
-  parent_uri: string | null;
-  name: string;
-  is_dir: number;
-  content: string | null;
-  content_bytes: Buffer | null;
-  size: number;
-  created_at: string;
-  updated_at: string;
-}
-
 const VIKING_URI_REGEX = /^viking:\/\//;
 
 @Injectable()
 export class VfsService {
 
-  constructor(private readonly database: DatabaseService) {}
+  constructor(
+    @InjectRepository(VfsNodeEntity)
+    private readonly repo: Repository<VfsNodeEntity>,
+    private readonly dataSource: DataSource,
+  ) {}
 
   private validateUri(uri: string): void {
     if (!VIKING_URI_REGEX.test(uri)) {
@@ -78,38 +72,33 @@ export class VfsService {
     return prefix;
   }
 
-  private rowToEntry(row: VfsRow): VfsEntry {
+  private entityToEntry(entity: VfsNodeEntity): VfsEntry {
     return {
-      uri: row.uri,
-      parentUri: row.parent_uri,
-      name: row.name,
-      isDir: row.is_dir === 1,
-      size: row.size,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-      content: row.content,
+      uri: entity.uri,
+      parentUri: entity.parentUri,
+      name: entity.name,
+      isDir: entity.isDir === 1,
+      size: entity.size,
+      createdAt: entity.createdAt,
+      updatedAt: entity.updatedAt,
+      content: entity.content,
     };
   }
 
   async stat(uri: string): Promise<VfsEntry> {
     const normalized = this.normalizeUri(uri);
-    const row = this.database.db
-      .prepare('SELECT uri, parent_uri, name, is_dir, content, content_bytes, size, created_at, updated_at FROM vfs_nodes WHERE uri = ?')
-      .get(normalized) as VfsRow | undefined;
+    const entity = await this.repo.findOneBy({ uri: normalized });
 
-    if (!row) {
+    if (!entity) {
       throw new NotFoundError(normalized);
     }
 
-    return this.rowToEntry(row);
+    return this.entityToEntry(entity);
   }
 
   async exists(uri: string): Promise<boolean> {
     const normalized = this.normalizeUri(uri);
-    const row = this.database.db
-      .prepare('SELECT 1 FROM vfs_nodes WHERE uri = ?')
-      .get(normalized) as { 1: number } | undefined;
-    return row !== undefined;
+    return this.repo.existsBy({ uri: normalized });
   }
 
   async mkdir(uri: string): Promise<VfsEntry> {
@@ -129,12 +118,15 @@ export class VfsService {
 
     const name = normalized.split('/').pop() ?? '';
 
-    this.database.db
-      .prepare(
-        `INSERT INTO vfs_nodes (uri, parent_uri, name, is_dir, size, created_at, updated_at)
-         VALUES (?, ?, ?, 1, 0, ?, ?)`,
-      )
-      .run(normalized, parent, name, now, now);
+    await this.repo.insert({
+      uri: normalized,
+      parentUri: parent,
+      name,
+      isDir: 1,
+      size: 0,
+      createdAt: now,
+      updatedAt: now,
+    });
 
     return {
       uri: normalized,
@@ -158,13 +150,21 @@ export class VfsService {
       await this.mkdir(parent);
     }
 
-    this.database.db
-      .prepare(
-        `INSERT INTO vfs_nodes (uri, parent_uri, name, is_dir, content, size, created_at, updated_at)
-         VALUES (?, ?, ?, 0, ?, ?, ?, ?)
-         ON CONFLICT(uri) DO UPDATE SET content = excluded.content, size = excluded.size, updated_at = excluded.updated_at`,
-      )
-      .run(normalized, parent, name, content, size, now, now);
+    await this.repo
+      .createQueryBuilder()
+      .insert()
+      .values({
+        uri: normalized,
+        parentUri: parent,
+        name,
+        isDir: 0,
+        content,
+        size,
+        createdAt: now,
+        updatedAt: now,
+      })
+      .orUpdate(['content', 'size', 'updated_at'], ['uri'])
+      .execute();
 
     return {
       uri: normalized,
@@ -180,15 +180,16 @@ export class VfsService {
 
   async readFile(uri: string): Promise<string> {
     const normalized = this.normalizeUri(uri);
-    const row = this.database.db
-      .prepare('SELECT content FROM vfs_nodes WHERE uri = ? AND is_dir = 0')
-      .get(normalized) as { content: string | null } | undefined;
+    const entity = await this.repo.findOne({
+      where: { uri: normalized, isDir: 0 },
+      select: ['content'],
+    });
 
-    if (!row) {
+    if (!entity) {
       throw new NotFoundError(normalized);
     }
 
-    return row.content ?? '';
+    return entity.content ?? '';
   }
 
   async rm(uri: string, recursive: boolean = false): Promise<void> {
@@ -199,21 +200,22 @@ export class VfsService {
     }
 
     if (recursive) {
-      this.database.db
-        .prepare('DELETE FROM vfs_nodes WHERE uri = ? OR uri LIKE ?')
-        .run(normalized, `${normalized}/%`);
+      await this.repo
+        .createQueryBuilder()
+        .delete()
+        .where('uri = :uri OR uri LIKE :pattern', {
+          uri: normalized,
+          pattern: `${normalized}/%`,
+        })
+        .execute();
     } else {
-      const children = this.database.db
-        .prepare('SELECT 1 FROM vfs_nodes WHERE parent_uri = ? LIMIT 1')
-        .get(normalized) as { 1: number } | undefined;
+      const hasChildren = await this.repo.existsBy({ parentUri: normalized });
 
-      if (children) {
+      if (hasChildren) {
         throw new ConflictError(`Directory not empty: ${normalized}`);
       }
 
-      this.database.db
-        .prepare('DELETE FROM vfs_nodes WHERE uri = ?')
-        .run(normalized);
+      await this.repo.delete({ uri: normalized });
     }
   }
 
@@ -236,45 +238,55 @@ export class VfsService {
 
     const toName = toNorm.split('/').pop() ?? '';
 
-    const moveNode = this.database.db.transaction(() => {
-      this.database.db
-        .prepare('UPDATE vfs_nodes SET uri = ?, parent_uri = ?, name = ?, updated_at = ? WHERE uri = ?')
-        .run(toNorm, toParent, toName, new Date().toISOString(), fromNorm);
+    await this.dataSource.transaction(async (manager) => {
+      const vfsRepo = manager.getRepository(VfsNodeEntity);
 
-      const children = this.database.db
-        .prepare('SELECT uri FROM vfs_nodes WHERE uri LIKE ?')
-        .all(`${fromNorm}/%`) as Array<{ uri: string }>;
+      await vfsRepo
+        .createQueryBuilder()
+        .update()
+        .set({ uri: toNorm, parentUri: toParent, name: toName, updatedAt: new Date().toISOString() })
+        .where('uri = :uri', { uri: fromNorm })
+        .execute();
+
+      const children = await vfsRepo
+        .createQueryBuilder()
+        .select('uri')
+        .where('uri LIKE :pattern', { pattern: `${fromNorm}/%` })
+        .getRawMany<{ uri: string }>();
 
       for (const child of children) {
         const newChildUri = toNorm + child.uri.slice(fromNorm.length);
         const newChildParent = this.parentUri(newChildUri) ?? toNorm;
-        this.database.db
-          .prepare('UPDATE vfs_nodes SET uri = ?, parent_uri = ?, updated_at = ? WHERE uri = ?')
-          .run(newChildUri, newChildParent, new Date().toISOString(), child.uri);
+        await vfsRepo
+          .createQueryBuilder()
+          .update()
+          .set({ uri: newChildUri, parentUri: newChildParent, updatedAt: new Date().toISOString() })
+          .where('uri = :uri', { uri: child.uri })
+          .execute();
       }
     });
-
-    moveNode();
   }
 
   async ls(uri: string, options: LsOptions = {}): Promise<VfsEntry[]> {
     const normalized = uri === 'viking://' ? 'viking://' : this.normalizeUri(uri);
     const { recursive = false, showAllHidden = false, nodeLimit } = options;
 
-    let rows: VfsRow[];
+    let entities: VfsNodeEntity[];
 
     if (recursive) {
       const pattern = normalized === 'viking://' ? 'viking://%' : `${normalized}/%`;
-      rows = this.database.db
-        .prepare('SELECT uri, parent_uri, name, is_dir, content, content_bytes, size, created_at, updated_at FROM vfs_nodes WHERE uri LIKE ? ORDER BY uri')
-        .all(pattern) as VfsRow[];
+      entities = await this.repo.find({
+        where: { uri: Like(pattern) },
+        order: { uri: 'ASC' },
+      });
     } else {
-      rows = this.database.db
-        .prepare('SELECT uri, parent_uri, name, is_dir, content, content_bytes, size, created_at, updated_at FROM vfs_nodes WHERE parent_uri = ? ORDER BY uri')
-        .all(normalized) as VfsRow[];
+      entities = await this.repo.find({
+        where: { parentUri: normalized },
+        order: { uri: 'ASC' },
+      });
     }
 
-    let entries = rows.map((row) => this.rowToEntry(row));
+    let entries = entities.map((e) => this.entityToEntry(e));
 
     if (!showAllHidden) {
       entries = entries.filter(
@@ -413,9 +425,13 @@ export class VfsService {
     const normalized = this.normalizeUri(uri);
     const dbPattern = normalized === 'viking://' ? 'viking://%' : `${normalized}/%`;
 
-    const rows = this.database.db
-      .prepare('SELECT uri, content FROM vfs_nodes WHERE is_dir = 0 AND uri LIKE ? AND content IS NOT NULL')
-      .all(dbPattern) as Array<{ uri: string; content: string }>;
+    const rows = await this.repo
+      .createQueryBuilder('node')
+      .select(['node.uri', 'node.content'])
+      .where('node.isDir = 0 AND node.uri LIKE :pattern AND node.content IS NOT NULL', {
+        pattern: dbPattern,
+      })
+      .getMany();
 
     const flags = caseInsensitive ? 'gi' : 'g';
     const regex = new RegExp(pattern, flags);
@@ -423,7 +439,7 @@ export class VfsService {
 
     for (const row of rows) {
       const matches: string[] = [];
-      const lines = row.content.split('\n');
+      const lines = (row.content ?? '').split('\n');
       for (const line of lines) {
         if (regex.test(line)) {
           matches.push(line);
@@ -447,9 +463,11 @@ export class VfsService {
     const baseUri = uri ? this.normalizeUri(uri) : 'viking://';
     const dbPattern = baseUri === 'viking://' ? 'viking://%' : `${baseUri}/%`;
 
-    const rows = this.database.db
-      .prepare('SELECT uri FROM vfs_nodes WHERE uri LIKE ? ORDER BY uri')
-      .all(dbPattern) as Array<{ uri: string }>;
+    const rows = await this.repo.find({
+      where: { uri: Like(dbPattern) },
+      select: ['uri'],
+      order: { uri: 'ASC' },
+    });
 
     const globRegex = globToRegex(pattern);
     let matches = rows

@@ -1,7 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigModule } from '@nestjs/config';
 import { ResourceService } from '../src/resource/resource.service';
-import { DatabaseService } from '../src/storage/database.service';
 import { VfsService } from '../src/storage/vfs.service';
 import { ContextVectorService } from '../src/storage/context-vector.service';
 import { EmbeddingService } from '../src/embedding/embedding.service';
@@ -37,7 +36,6 @@ describe('ResourceService', () => {
       ],
       providers: [
         ResourceService,
-        DatabaseService,
         VfsService,
         ContextVectorService,
         {

@@ -5,12 +5,25 @@ import { mkdtempSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { SkillService } from './skill.service';
-import { DatabaseService } from '../storage/database.service';
 import { VfsService } from '../storage/vfs.service';
 import { ContextVectorService } from '../storage/context-vector.service';
-import { ContextVectorEntity } from '../storage/entities';
+import {
+  ContextVectorEntity,
+  VfsNodeEntity,
+  RelationEntity,
+  SessionEntity,
+  SessionMessageEntity,
+} from '../storage/entities';
 import { EmbeddingService } from '../embedding/embedding.service';
 import { NotFoundException } from '@nestjs/common';
+
+const entities = [
+  ContextVectorEntity,
+  VfsNodeEntity,
+  RelationEntity,
+  SessionEntity,
+  SessionMessageEntity,
+];
 
 describe('SkillService', () => {
   let module: TestingModule;
@@ -35,14 +48,13 @@ describe('SkillService', () => {
         TypeOrmModule.forRoot({
           type: 'better-sqlite3',
           database: join(tmpDir, 'viking.db'),
-          entities: [ContextVectorEntity],
+          entities,
           synchronize: true,
         }),
-        TypeOrmModule.forFeature([ContextVectorEntity]),
+        TypeOrmModule.forFeature(entities),
       ],
       providers: [
         SkillService,
-        DatabaseService,
         VfsService,
         ContextVectorService,
         {
